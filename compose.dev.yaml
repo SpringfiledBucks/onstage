@@ -5,6 +5,8 @@ x-app: &app
   environment:
     DATABASE_URL: postgresql+psycopg://onstage:isolated-development-only@db:5432/onstage
     ONSTAGE_PUBLIC_ORIGIN: http://localhost:8765
+    ONSTAGE_FRONTEND_ORIGINS: http://localhost:8080
+    ONSTAGE_ADMIN_ORIGINS: http://localhost:8081
     ONSTAGE_SECURE_COOKIE: "0"
     ONSTAGE_VERSION: isolated-development
   depends_on:
@@ -36,5 +38,25 @@ services:
     tmpfs: ["/tmp:size=16m,mode=1777"]
     cap_drop: ["ALL"]
     security_opt: ["no-new-privileges:true"]
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      target: web
+    environment:
+      ONSTAGE_API_ORIGIN: http://localhost:8765
+      ONSTAGE_WS_ORIGIN: ws://localhost:8765
+    ports: ["127.0.0.1:8080:8080"]
+    depends_on: [app]
+  admin:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      target: admin
+    environment:
+      ONSTAGE_API_ORIGIN: http://localhost:8765
+      ONSTAGE_WS_ORIGIN: ws://localhost:8765
+    ports: ["127.0.0.1:8081:8080"]
+    depends_on: [app]
 volumes:
   development-postgres:

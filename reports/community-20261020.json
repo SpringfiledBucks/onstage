@@ -1,0 +1,116 @@
+{
+  "project": "Onstage",
+  "version": "0.9.0",
+  "updated_at_utc": "2026-10-20T08:14:41.399731+00:00",
+  "status": "PARTIAL",
+  "scope": "Account/community implementation and separate user/admin frontends; local verification and GitHub review branch. Production deployment belongs to collaborator.",
+  "baseline_commit": "8487458bf4d695f6dc4fdfa53b9b19e21f9967a8",
+  "branch": "feature/accounts-community",
+  "implemented": [
+    "Unique normalized username/password accounts, Argon2id, remember-me, device sessions, ban and audited admin grants; usernames private to self/admin",
+    "Separate React user/admin static frontends, FastAPI API, credentialed exact Origin allowlists and anonymous public-read neboer.site wildcard",
+    "Cursor-paged room lists, bounded ranking snapshots, rating/dialogue/time order, role preferences and recruitment; atomic private room/password/invite access",
+    "Scene switch system events, ended-room hiding, anonymous per-account rating, private participant votes and reports, developer feedback",
+    "Author-consented stage-only multi-message shares with withdrawal/revocation; user/admin management and audit API",
+    "All actors/host offline lease observation for ten minutes, bounded rotating sweep and fault/restart protection",
+    "Explicit additive PostgreSQL Alembic migration and complete v2 backup/restore; legacy SQLite and original art retained",
+    "Protected Prometheus metrics and Grafana definition; three candidate container builds and controlled registry publication workflow",
+    "Existing incremental chat, exact ACK/sync reconciliation and original-art hashed PWA cache retained; bounded stale-response cache repair and explicit service-worker activation"
+  ],
+  "verification": {
+    "python": {
+      "status": "VERIFIED",
+      "result": "237 passed, 2 skipped, 1 warning",
+      "command": "python -m pytest -q with ONSTAGE_TEST_DATABASE_URL for isolated real PostgreSQL",
+      "environment": "Windows Python 3.12.12; native loopback PostgreSQL 17.11, isolated test schemas",
+      "skips": "Windows symlink creation privilege unavailable; Linux CI protection checks remain",
+      "warning": "Starlette httpx TestClient deprecation"
+    },
+    "frontend": {
+      "status": "VERIFIED",
+      "commands": [
+        "npm run check:frontends",
+        "npm run test:frontends",
+        "npm run build:frontends"
+      ],
+      "result": "TypeScript passed; 7 DOM tests passed; user and admin production builds passed"
+    },
+    "protocol_compatibility": {
+      "status": "VERIFIED",
+      "commands": [
+        "node tests/frontend_delivery_check.cjs",
+        "node tests/frontend_navigation_check.cjs",
+        "node tests/pwa_cache_check.cjs"
+      ],
+      "result": "Exact pending identity/draft/order regressions and real SW handlers passed; bounded cache repair and manual activation passed"
+    },
+    "d1_legacy": {
+      "status": "VERIFIED",
+      "result": "Actual isolated Miniflare D1: write-freeze, 1107-room pagination and 18 integration groups passed",
+      "scope": "Maintained 0.8-compatible adapter; no new account/community implementation claimed"
+    },
+    "offline_legacy": {
+      "status": "VERIFIED",
+      "report": "reports/preview-adapter-0.9-20261020.json",
+      "result": "21 isolated adapter/DOM steps passed; not account/community implementation"
+    },
+    "browser": {
+      "status": "VERIFIED",
+      "environment": "Actual IAB browser, synthetic loopback separate frontend/API/admin and real PostgreSQL",
+      "result": [
+        "Registration and preferences, room and original chat iframe, real Enter send and peer WebSocket rendering",
+        "Stage author consent, multi-message selection, rendered public share",
+        "Administrator login, registered user count/online filter/participation and audit list",
+        "185 public art assets / 16.31 MB cached after bounded recovery; manual worker upgrade preserved page"
+      ],
+      "screenshot": "reports/community-cache-20261020.png",
+      "scope": "Not independent human participants, physical phone, hosted target, venue network or OS-installed PWA"
+    },
+    "account_http_ws": {
+      "status": "VERIFIED",
+      "command": "python deploy/ci/account_smoke.py",
+      "environment": "Native loopback FastAPI and real PostgreSQL; not a container"
+    },
+    "recovery": {
+      "status": "VERIFIED",
+      "result": "Real PostgreSQL isolated migration idempotency, v1 compatibility and v2 complete populated backup/restore; browser/API restart retained synthetic data"
+    },
+    "monitoring_definitions": {
+      "status": "VERIFIED",
+      "result": "JSON/YAML parse and telemetry tests passed; actual Prometheus scrape/Grafana import not performed"
+    }
+  },
+  "dependency_audit": {
+    "result": "28 advisories: 1 critical, 17 high, 9 moderate, 1 low",
+    "scope": "Entire retained npm lock graph, including historical Next/Sites development toolchain; not a claim that all affect static nginx production runtime",
+    "action": "Updated new Vite builder to 8.3.4. Legacy Next/Sites/ws advisories remain unresolved; no force upgrade that breaks historical adapters."
+  },
+  "not_verified": [
+    "Hosted CI and container execution BLOCKED before any step by GitHub account billing lock; actual run recorded. No registry image or digest.",
+    "Production migration, unique write-entry cutover, collaborator cluster GitOps/rollout and target URL",
+    "Three independent people, physical phone, mainland/venue bandwidth and latency, OS-installed PWA",
+    "Live Prometheus scrape and Grafana import; thousand active rooms capacity (pagination scale only)",
+    "Full React replacement of mature chat: current same-frontend-origin /play iframe is intentional transitional reuse",
+    "Frontend base image tags are not digest-pinned yet; release freeze needs actual build provenance/digests"
+  ],
+  "language_decision": "Keep modular Python/PostgreSQL while current feature/API/concurrency behavior stabilizes. A later language migration requires measured cost/benefit and compatibility evidence, not automatic rewriting.",
+  "github": {
+    "repository": "https://github.com/SpringfiledBucks/onstage",
+    "visibility": "public",
+    "collaborator": {
+      "Neboer": "accepted write; maximum personal-repository collaborator role; live rechecked"
+    },
+    "push_status": "VERIFIED",
+    "actions_status": "BLOCKED before execution",
+    "image_digest": null,
+    "implementation_commit": "335bf059a41efc8c4b88deba42b7f30f2c1854ca",
+    "remote_ref": "refs/heads/feature/accounts-community",
+    "pull_request": "https://github.com/SpringfiledBucks/onstage/pull/1",
+    "pull_request_draft": true,
+    "actions_run": "https://github.com/SpringfiledBucks/onstage/actions/runs/39391879308",
+    "actions_reason": "The job was not started because your account is locked due to a billing issue.",
+    "validation_steps_executed": 0,
+    "image_published": false
+  },
+  "production_data_or_deployment_modified": false
+}

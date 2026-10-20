@@ -8,7 +8,7 @@ from app.main import create_app
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_public_cache_private_boundaries_and_gzip(tmp_path):
+def test_public_cache_private_boundaries_and_gzip(tmp_path, http_database):
     app = create_app(data_dir=tmp_path, public_origin='http://testserver', secure_cookie=False)
     manifest = json.loads((ROOT / 'static/assets-manifest.json').read_text(encoding='utf8'))
     source, entry = next(iter(manifest['assets'].items()))

@@ -48,7 +48,8 @@ def verify_pages(store):
     assert store.list_rooms(viewer,{},50,'|'.join(parts)) == {'rooms':[], 'has_more':False,'next_cursor':None}
     # Existing rows retain member permissions and host identity in batched snapshots.
     owned = store.list_rooms(owner,{},1)['rooms'][0]
-    assert owned['me']['is_host'] and owned['me']['can_manage_reports']
+    # Account-era policy: room ownership must not reveal private reports.
+    assert owned['me']['is_host'] and not owned['me']['can_manage_reports']
 
 
 def test_sqlite_thousand_rooms(tmp_path):
@@ -67,14 +68,17 @@ def test_sqlite_thousand_rooms(tmp_path):
     account = store.create_session(source="query-page",nickname="查询页")
     queries.clear()
     store.list_rooms(account["token"],{},100)
-    assert sum(sql.lstrip().upper().startswith("SELECT") for sql in queries) == 3
+    # One account-token lookup was added; room options and seats stay batched.
+    assert sum(sql.lstrip().upper().startswith("SELECT") for sql in queries) == 4
     with store._transaction() as connection:
         plan = connection.execute('EXPLAIN QUERY PLAN SELECT * FROM rooms ORDER BY created_at DESC,id ASC LIMIT 51').fetchall()
         assert any('rooms_created_page' in row[3] for row in plan)
 
 
 
-def test_room_pagination_http_validation(tmp_path):
+def test_room_pagination_http_validation(tmp_path, monkeypatch, http_database):
+    # Preserve the v0.8 API contract as an explicit compatibility path.
+    monkeypatch.setenv('ONSTAGE_LEGACY_GUESTS', '1')
     from fastapi.testclient import TestClient
     from app.main import create_app
     application = create_app(data_dir=tmp_path, public_origin="http://testserver", secure_cookie=False)

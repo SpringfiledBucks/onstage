@@ -24,7 +24,8 @@ def backup_before_migration(
 ) -> Path:
     if connection.in_transaction:
         raise RuntimeError("迁移备份须在写事务开始前完成。")
-    if from_version not in {"1", "2", "3"} or to_version != "4":
+    if not ((from_version in {"1", "2", "3"} and to_version == "4")
+            or (from_version == "4" and to_version == "4-community")):
         raise RuntimeError("未知的数据库迁移备份版本。")
     directory = data_dir / "backups"
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)

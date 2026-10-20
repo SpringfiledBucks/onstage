@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Create a consistent SQLite backup, including committed WAL content.
+"""Retired SQLite backup helper, retained only for historical regression tests.
 
 PostgreSQL uses DATABASE_URL and tools/database.py backup DESTINATION; do not
-point this SQLite-specific helper at a disconnected legacy file.
+point this SQLite-specific helper at a disconnected legacy file. Its CLI fails
+explicitly and does not open or modify any database.
 """
 import argparse
 from contextlib import closing
 import hashlib
-import json
 import os
 from pathlib import Path
 import sqlite3
@@ -46,16 +46,8 @@ def make_backup(source: Path, destination: Path):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("source", type=Path)
-    parser.add_argument("destination", type=Path)
-    args = parser.parse_args()
-    if os.environ.get("DATABASE_URL") or os.environ.get("ONSTAGE_DATABASE_URL"):
-        parser.error("PostgreSQL is configured; use tools/database.py backup DESTINATION.")
-    try:
-        print(json.dumps(make_backup(args.source, args.destination), ensure_ascii=False))
-    except (OSError, sqlite3.Error, ValueError, RuntimeError) as exc:
-        parser.exit(1, f"Backup failed: {exc}\n")
+    parser = argparse.ArgumentParser(description="Retired SQLite backup CLI. Use PostgreSQL tools/database.py backup DESTINATION.")
+    parser.error("SQLite operations are retired; use tools/database.py backup DESTINATION with DATABASE_URL. Existing files are preserved.")
 
 
 if __name__ == "__main__":

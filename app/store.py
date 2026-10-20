@@ -27,7 +27,7 @@ CHARACTER_IDS = {
 }
 
 
-class Store:
+class LegacyStore:
     """Every public operation owns one connection and one short transaction.
 
     These methods are synchronous: callers run a whole method in one worker
@@ -117,6 +117,11 @@ class Store:
                 self.last_migration_backup = backup_before_migration(
                     connection, self.settings.data_dir, schema_version, "4",
                 )
+            elif schema_version == '4' and not connection.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='alembic_version'").fetchone():
+                self.last_migration_backup = backup_before_migration(
+                    connection, self.settings.data_dir, '4', '4-community',
+                )
             connection.execute("PRAGMA journal_mode = WAL")
             connection.execute("BEGIN IMMEDIATE")
             if schema_version in {"1", "2", "3"}:
@@ -148,6 +153,8 @@ class Store:
         finally:
             connection.close()
         self.db_path.chmod(0o600)
+        from .extension_schema import migrate_sqlite_extensions
+        migrate_sqlite_extensions(self.db_path)
 
     def _migrate_one_to_two(self, connection: sqlite3.Connection) -> None:
         migrate_one_to_two(connection, self.scenarios)
@@ -191,8 +198,12 @@ class Store:
             ).fetchone()
             if row is None or row["value"] != "4":
                 raise DomainError(503, "数据库结构尚未就绪。")
+            from .extension_schema import REVISION
+            revision = connection.execute('SELECT version_num FROM alembic_version').fetchone()
+            if revision is None or revision[0] != REVISION:
+                raise DomainError(503, '账户与房间扩展尚未迁移。')
             connection.execute("SELECT id FROM rooms LIMIT 1").fetchone()
-            return {"status": "ready", "schema_version": 4}
+            return {"status": "ready", "schema_version": 4, "community_revision": REVISION}
 
     def _session(
         self,
@@ -290,7 +301,8 @@ class Store:
             self._check_rate(connection, "session", source_key, self.settings.session_limit_per_hour, 3600)
             now = utc_now()
             active = connection.execute(
-                'SELECT COUNT(*) FROM sessions WHERE revoked_at IS NULL AND expires_at>:p0', {'p0': iso_time(now)}
+                'SELECT COUNT(*) FROM sessions s WHERE revoked_at IS NULL AND expires_at>:p0 '
+                'AND NOT EXISTS(SELECT 1 FROM users u WHERE u.principal_session_id=s.id)', {'p0': iso_time(now)}
             ).fetchone()[0]
             if active >= self.settings.max_active_sessions:
                 raise DomainError(429, "当前体验人数已满，请稍后再来。")
@@ -482,6 +494,9 @@ class Store:
             session = self._session(connection, token)
             scope = token_hash(session["id"])[:16]
             conditions = ["NOT EXISTS(SELECT 1 FROM room_bans b WHERE b.room_id=r.id AND b.session_id=:sid)"]
+            conditions.append("(COALESCE((SELECT access FROM room_options WHERE room_id=r.id),'public')='public' OR r.host_session_id=:sid OR EXISTS(SELECT 1 FROM room_members own WHERE own.room_id=r.id AND own.session_id=:sid) OR EXISTS(SELECT 1 FROM room_access_grants g WHERE g.room_id=r.id AND g.session_id=:sid))")
+            if filter != 'mine':
+                conditions.append("COALESCE((SELECT hidden FROM room_options WHERE room_id=r.id),0)=0")
             params = {"sid": session["id"], "limit": limit + 1}
             if filter == "active":
                 conditions.append("r.status<>'ended'")
@@ -500,7 +515,7 @@ class Store:
                 params.update(at=parts[2], rid=parts[3])
                 conditions.append("(r.created_at<:at OR (r.created_at=:at AND r.id>:rid))")
             rooms = connection.execute(
-                "SELECT r.*,(SELECT id FROM room_members h WHERE h.room_id=r.id AND h.session_id=r.host_session_id) AS host_member_id FROM rooms r WHERE " + " AND ".join(conditions) + " ORDER BY r.created_at DESC,r.id ASC LIMIT :limit", params,
+                "SELECT r.*,o.access AS list_access,o.hidden AS list_hidden,o.share_enabled AS list_share_enabled,o.cast_scenario_id AS list_cast_scenario_id,o.recruitment_json AS list_recruitment_json,(SELECT id FROM room_members h WHERE h.room_id=r.id AND h.session_id=r.host_session_id) AS host_member_id FROM rooms r LEFT JOIN room_options o ON o.room_id=r.id WHERE " + " AND ".join(conditions) + " ORDER BY r.created_at DESC,r.id ASC LIMIT :limit", params,
             ).fetchall()
             has_more = len(rooms) > limit
             rooms = rooms[:limit]
@@ -513,7 +528,11 @@ class Store:
                 for member in members:
                     by_room[member["room_id"]].append(member)
             return {"rooms": [
-                self._snapshot(connection, room, session["id"], online.get(room["id"], set()), member_rows=by_room[room["id"]], host_row={"id": room["host_member_id"]} if room["host_member_id"] else None)
+                self._snapshot(connection, room, session["id"], online.get(room["id"], set()), member_rows=by_room[room["id"]], host_row={"id": room["host_member_id"]} if room["host_member_id"] else None,
+                               options_override={'access': room['list_access'] or 'public', 'hidden': room['list_hidden'] or 0,
+                                                 'share_enabled': room['list_share_enabled'] if room['list_share_enabled'] is not None else 1,
+                                                 'cast_scenario_id': room['list_cast_scenario_id'] or room['scenario_id'],
+                                                 'recruitment_json': room['list_recruitment_json'] or '[]'})
                 for room in rooms
             ], "has_more": has_more, "next_cursor": "|".join((filter, scope, rooms[-1]["created_at"], rooms[-1]["id"])) if has_more else None}
 
@@ -566,9 +585,22 @@ class Store:
     def create_room(
         self, token: str | None, csrf: str | None, scenario_id: str, title: str | None,
         background: str | None = None, announcement: str = "", source: str = "unknown",
+        *, access: str = 'public', password: str | None = None,
     ) -> str:
+        if access not in {'public', 'password', 'invite'}:
+            raise DomainError(422, '访问方式不合法。')
+        encoded = None
+        if access == 'password':
+            if not isinstance(password, str) or not 8 <= len(password) <= 128:
+                raise DomainError(422, '房间密码须为8–128字符。')
+            from .accounts import PASSWORDS
+            encoded = PASSWORDS.hash(password)
+        elif password is not None:
+            raise DomainError(422, '仅密码房可设置密码。')
         with self._transaction(write=True, session_token=token, admission='rooms') as connection:
             session = self._session(connection, token, csrf, require_csrf=True)
+            if access != 'public':
+                self._account(connection, session)
             scenario = self.scenarios.get(scenario_id)
             if scenario is None:
                 raise DomainError(400, "场景不存在。")
@@ -598,6 +630,9 @@ class Store:
                 {'p0': room_id, 'p1': title, 'p2': scenario_id, 'p3': background, 'p4': announcement, 'p5': session["id"], 'p6': now, 'p7': now},
             )
             self._new_member(connection, room_id, session["id"])
+            connection.execute('INSERT INTO room_options(room_id,access,password_hash,share_enabled,cast_scenario_id) '
+                               'VALUES(:r,:access,:password,:share,:scene)',
+                               {'r': room_id, 'access': access, 'password': encoded, 'share': int(access == 'public'), 'scene': scenario_id})
             self._member_event(
                 connection, self._room(connection, room_id),
                 self._member(connection, room_id, session["id"]), "join",
@@ -1149,8 +1184,18 @@ class Store:
             }
 
 
+from .accounts import AccountMixin
+from .room_features import RoomFeaturesMixin
+from .community import CommunityMixin
+from .push import NotificationMixin
+
+
+class Store(NotificationMixin, AccountMixin, RoomFeaturesMixin, CommunityMixin, LegacyStore):
+    """Shared transactional domain with additive account/community modules."""
+
+
 def create_store(settings: Settings) -> Store:
-    if settings.database_url:
-        from .postgres import PostgresStore
-        return PostgresStore(settings)
-    return Store(settings)
+    if not settings.database_url:
+        raise RuntimeError("DATABASE_URL is required; the application supports PostgreSQL only. Existing SQLite files are not opened or migrated.")
+    from .postgres import PostgresStore
+    return PostgresStore(settings)

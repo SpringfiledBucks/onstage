@@ -1,10 +1,55 @@
+## 2026-10-20 通知与数据入口更新
+
+给协作者的顺序操作说明与验收回执见 [Neboer 部署升级交接](NEBOER_DEPLOY_UPGRADE_20261020.md)。其中实际未验证/CI阻塞清单优先于历史版本说明。
+
+当前应用及运维CLI只使用PostgreSQL；旧SQLite文件不打开、不迁移、不删除。部署使用新库显式执行 `python tools/database.py migrate`，已有PostgreSQL数据先备份再升级到20261020_02；旧PG快照恢复仍受控支持。历史SQLite领域代码仅保留作回归参考，不是可部署运行模式。
+
+PWA Web Push按浏览器主动授权、按房间关注，默认关闭；通知固定提示“你关注的房间有新消息”，不含正文、角色名、用户名或房间标题。登录设备退出/封禁撤销其订阅，踢人/退场/后台角色变化在发送前复核。推送第三方仅接收加密标识；浏览器/系统/网络仍可阻止或延迟送达，Web Push不能代替HTTP游标补齐或证明对方已读。旧已安装PWA须先手动更新缓存服务，协议握手通过后才允许开启通知。
+
+由维护者在受限目录执行 `python tools/push_keys.py /restricted/onstage-vapid-private.pem` 生成并妥善备份稳定密钥；只读挂载为Secret，配置ONSTAGE_VAPID_PRIVATE_KEY_FILE和ONSTAGE_VAPID_SUBJECT。不将PEM、订阅endpoint/keys、私有快照上传仓库/日志/指标；密钥丢失或更换需要浏览器重新订阅。未配置时UI明确不可用，不影响聊天。API单副本有一个受控推送worker，队列与消息同事务提交，每个订阅仅保留最新提醒；总订阅与每账户/关注房间均有界，网络超时与重试有界，过期/失效订阅清除，异常重启通过租约恢复。短时通知合并可能只跳到最后更新房间；其他房间消息仍可同步完整读取。
+
+公网使用HTTPS和准确可信前端Origin；服务端需能访问浏览器推送服务HTTPS，默认只允许FCM/Mozilla/Apple等明确主机且禁止重定向。扩展provider须维护者单独配置准确可信host，不开放任意用户URL。手机后台能力还受浏览器、系统权限、主屏安装和推送服务网络可达性影响；大陆及现场网络必须实机验证，不保证绕过系统限制。当前不宣称外部推送通道已验收。
+
+赞踩有效记录保持“对局＋评价者＋被评价者”唯一；服务端对同一双方跨局累计设置防刷上限，改票不新增记录、撤回保留占用，相同请求重试不消耗额度。普通用户看不到额度、阈值或他人评价；管理员仍能查看评价记录。
+
+---
+
+# 0.9 分离部署合同（覆盖下方0.8同源默认）
+
+API继续一个FastAPI副本/一个Uvicorn worker、独立PostgreSQL、8765端口。当前服务和管理/备份命令仅接受PostgreSQL；缺DATABASE_URL直接失败，旧SQLite文件原样保留且不导入旧历史。首次新站使用空PostgreSQL执行迁移后从新账户开始。用户端和管理端分别是Dockerfile.frontend的web/admin target，静态HTTP端口8080，各有 /healthz。候选镜像构建/启动必须由CI实跑确认；本机没有Docker，本轮不安装系统软件。
+
+用户端ONSTAGE_API_ORIGIN配置API的准确Origin，ONSTAGE_WS_ORIGIN配置WS Origin；容器启动生成公开config.js，不写任何秘密。分别部署两个前端域名并配置SPA回退；/play、/static、/assets应真实文件404，不回退HTML。/sw.js为原公开美术SW，根scope；仅成功的哈希媒体响应immutable，404不缓存，避免发布替换时把缺图永久缓存。发现旧HTTP错误MIME/404时，显式缓存有且只有一次绕过HTTP缓存的恢复；待更新的SW由用户在设置手动接管，不重载聊天和草稿。HTML/config/API不缓存。前端镜像只运行nginx，不运行Next或Node服务。Node/NGINX基础标签在候选阶段未锁digest；正式冻结还需记录实际构建来源与最终镜像digest。
+
+后端ONSTAGE_PUBLIC_ORIGIN是API Origin，ONSTAGE_FRONTEND_ORIGINS为逗号分隔准确可信用户前端，ONSTAGE_ADMIN_ORIGINS为独立管理端。公开GET允许有效HTTPS *.neboer.site，其Cookie忽略且不返回credentialed CORS；账户API/WS不允许泛域。生产ONSTAGE_SECURE_COOKIE=1且所有入口HTTPS，同站子域使用SameSite Strict、API host-only __Host-onstage_session；HTTP开发用不同Cookie名。不要为了跨子域设置Domain=.neboer.site。额外反向代理需保留Origin、Upgrade与Cookie，不能统一添加宽松CORS。
+
+```sh
+# 独立环境/Secret已经指向目标，先备份、隔离恢复验证，再迁移正式库。
+python tools/database.py backup /restricted/pre-community.json
+python tools/database.py migrate
+# 首位管理员先自行注册，维护者对准确用户名授权并留审计。
+python tools/accounts.py --operator APPROVED_OPERATOR grant-admin EXACT_USERNAME
+# 前端镜像分别构建，部署时注入上述公开Origin。
+docker build -f Dockerfile.frontend --target web -t onstage-web:RELEASE .
+docker build -f Dockerfile.frontend --target admin -t onstage-admin:RELEASE .
+```
+
+迁移使用Alembic revision20261020_02，不允许直接降级删除账户数据。新快照v3涵盖账户/授权/评分/分享、防刷账本和私密推送订阅/待发队列全部表，兼容旧PG v1/v2恢复；也能在迁移前备份完整旧PG schema4。先冻结旧写入口、最终导出、隔离恢复逐字段核验，再切唯一主站；旧Cookie不自动继承，不按昵称合并。旧镜像回退不能代替数据库回退；恢复前先保存新写入并明确恢复点与丢失窗口。
+
+Compose只用于隔离开发：启动db→run migrate→up app web admin。用户端localhost:8080，管理端localhost:8081，API localhost:8765；不是外部联机部署。不修改现有代理、路由或其他服务。
+
+CI在PR运行新前端TS/DOM/build、历史领域回归、真实隔离PG服务合同、迁移与恢复、API和两个前端镜像构建/启动；受控main发布才推ghcr.io/OWNER/onstage、onstage-web、onstage-admin的commit/版本标签并输出digest。PR不获得生产凭据。合作者按已有GitOps机制选择digest并触发rollout；本仓库不声称已配置集群自动跟踪。仍使用Recreate处理API更新，无新旧应用并行写入窗口。
+
+监控见deploy/monitoring：API /metrics需要独立Bearer Secret，20秒后台采样；Prometheus目标端口8765。Grafana JSON/YAML验证与实际导入/抓取是不同验收，后者须在对方环境执行。
+
+---
+
 # 自托管镜像与合作方部署
 
 0.8新增：镜像直接包含原图与校验后的派生资源，不依赖运行时编码器。代理需放行根`/sw.js`与`/static/manifest.webmanifest`，保持JS/JSON正确MIME及SW根scope；HTTPS下支持安装和公开美术缓存。仅`/static/assets/optimized/<sha256>.webp`长期immutable，HTML/JS/清单重新校验，API保持no-store，勿在全局代理统一覆盖这些头。应用已压缩文本，不重复压缩图片；代理若统一压缩需避免重复处理。PWA不改变Cookie/Origin、HTTP补齐、WS Upgrade、单副本或独立PG要求。
 
 PG部署仍先备份并独立运行`python tools/database.py migrate`，本轮追加分页索引；不需新数据库容器、权限或破坏性schema切换。合作方负责目标更新与设备验收，源码通过不等于CD上线。具体缓存/旧资源回退见RUNBOOK。
 
-本文件是部署操作合同。配置文件存在、静态检查通过或 Actions 成功，均不代表公网、集群 CD、手机和真人验收完成。首个支持目标为 Linux amd64、一个应用副本、一个 Uvicorn worker、独立 PostgreSQL 16；共享前端由同一 FastAPI 镜像提供。SQLite 仅保留旧数据兼容和明确的本地开发路径。
+本文件是部署操作合同。配置文件存在、静态检查通过或 Actions 成功，均不代表公网、集群 CD、手机和真人验收完成。首个支持目标为 Linux amd64、一个应用副本、一个 Uvicorn worker、独立 PostgreSQL 16；共享前端由同一 FastAPI 镜像提供。SQLite 历史源码仅作回归参考，当前部署和本地开发均使用 PostgreSQL。
 
 ## 本机隔离演练
 
@@ -35,7 +80,7 @@ python tools/database.py verify /restricted/onstage-before-release.json
 python tools/database.py migrate
 ```
 
-同样命令可用 release 镜像运行；备份目录单独挂载并只授予 UID 10001 所需读写权限，不将备份烘入镜像或上传 Actions。先在独立 PostgreSQL 恢复、校验稳定 ID、消息游标、席位、权限、贴纸及举报快照，再切换；业务探针补验抢角、发送、权限与历史。SQLite 导入入口为 `python tools/database.py import-sqlite /restricted/final.sqlite3`；Sites 的 `onstage-confidential-state-v1` schema 4 私有快照可通过 `restore` 受控导入，不能把 D1 JSON 传给 `import-sqlite`。该旧快照缺少 `rate_events`，不等价于物理备份；恢复后保留业务表、稳定 ID 和权限，但不能宣称历史限流窗口也已迁移。新 PostgreSQL 私有快照包含限流表。第一次切换先冻结旧站写入，再取最终一致性导出和恢复核验，最终仅一个主站接收写入。换域名按新访客入场；不得凭昵称恢复房主权限。
+同样命令可用 release 镜像运行；备份目录单独挂载并只授予 UID 10001 所需读写权限，不将备份烘入镜像或上传 Actions。先在独立 PostgreSQL 恢复、校验稳定 ID、消息游标、席位、权限、贴纸及举报快照，再切换；业务探针补验抢角、发送、权限与历史。`import-sqlite`命令已经移除，旧SQLite不导入新站，旧库与旧站不再作为当前写入口。备份/恢复只面向选定PostgreSQL，保留源库不覆盖目标。历史快照解析代码留作回归，不代表本轮执行历史迁入；若未来另行批准恢复历史，须先定义受控身份转接，不能按昵称继承权限。
 
 `deploy/migrate-job.yaml` 为显式 Kubernetes Job 模板，`backoffLimit: 0`；使用与应用相同 digest 和 Secret，不能作为每个 Pod 的 initContainer。维护者先完成写冻结、备份及恢复演练，停止旧应用，等待 Job 成功再启动新应用。跨 schema 回退需要恢复已核验备份，不能只回滚镜像。
 

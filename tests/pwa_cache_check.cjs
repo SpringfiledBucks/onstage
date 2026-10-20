@@ -24,10 +24,14 @@ const url = `https://onstage.test/static/assets/optimized/${hash}.webp`;
 let fetchCount = 0;
 let responseBody = body;
 let contentType = "image/webp";
+let repairCachedResponse = false;
+let activations = 0;
+let responseStatus = 200;
+const fetchCalls = [];
 const context = vm.createContext({
-  self: { location: { origin: "https://onstage.test" }, clients: { claim: async () => {} }, addEventListener: (type, fn) => { listeners[type] = fn; } },
+  self: { location: { origin: "https://onstage.test" }, clients: { claim: async () => {} }, skipWaiting: async () => { activations++; }, addEventListener: (type, fn) => { listeners[type] = fn; } },
   caches, Request, Response, Headers, URL, AbortController, crypto: webcrypto, Uint8Array, setTimeout, clearTimeout,
-  fetch: async () => { fetchCount++; return new Response(responseBody, { headers: { "Content-Type": contentType } }); },
+  fetch: async (_, options) => { fetchCount++; fetchCalls.push(options); return new Response(responseBody, { status: repairCachedResponse && options.cache === "reload" ? 200 : responseStatus, headers: { "Content-Type": repairCachedResponse && options.cache === "reload" ? "image/webp" : contentType } }); },
 });
 vm.runInContext(fs.readFileSync("static/sw.js", "utf8"), context);
 function fetchEvent(path, options = {}) {
@@ -69,6 +73,21 @@ async function message(type, extra = {}) {
   assert.equal((await message("ARTWORK_CLEAR")).ok, true);
   assert(stores.has("unrelated-cache"), "clear must preserve unrelated applications");
   assert.equal((await message("ARTWORK_STATUS")).result.cached, 0);
+  responseBody = body; contentType = "application/octet-stream"; repairCachedResponse = true;
+  const beforeRepair = fetchCount;
+  assert.equal((await message("ARTWORK_CACHE", { url })).ok, true, "explicit caching must recover stale HTTP MIME metadata");
+  assert.equal(fetchCount - beforeRepair, 2, "only one bounded cache-bypassing retry");
+  assert.equal(fetchCalls.at(-1).cache, "reload");
+  await message("ARTWORK_CACHE", { url });
+  assert.equal(fetchCount - beforeRepair, 2, "a repaired cached asset must never be downloaded again");
+  assert.equal(activations, 0, "install/cache must not force an update over open drafts");
+  assert.equal((await message("ARTWORK_ACTIVATE")).ok, true);
+  assert.equal(activations, 1, "activation is only an explicit application action, without reload");
+  await message("ARTWORK_CLEAR");
+  responseStatus = 404; contentType = 'text/html';
+  const before404 = fetchCount;
+  assert.equal((await message("ARTWORK_CACHE", { url })).ok, true, "cached immutable 404 must recover after host repair");
+  assert.equal(fetchCount - before404, 2);
   const manifest = JSON.parse(fs.readFileSync("static/manifest.webmanifest", "utf8"));
   assert.equal(manifest.scope, "/"); assert.equal(manifest.start_url, "/"); assert.equal(manifest.display, "standalone");
   for (const icon of manifest.icons) {

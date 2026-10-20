@@ -103,7 +103,8 @@ def test_slow_peer_times_out_and_http_sync_remains_authoritative():
     asyncio.run(scenario())
 
 
-def test_message_ack_does_not_wait_for_notification_and_sync_recovers(tmp_path):
+def test_message_ack_does_not_wait_for_notification_and_sync_recovers(tmp_path, monkeypatch, http_database):
+    monkeypatch.setenv('ONSTAGE_LEGACY_GUESTS', '1')
     app = create_app(data_dir=tmp_path, public_origin="http://testserver", secure_cookie=False)
     with TestClient(app) as client:
         result = client.post("/api/session", json={})
@@ -148,7 +149,8 @@ def test_message_ack_does_not_wait_for_notification_and_sync_recovers(tmp_path):
     assert app.state.hub._worker is None
 
 
-def test_write_freeze_keeps_readiness_and_reads_but_blocks_mutations(tmp_path, monkeypatch):
+def test_write_freeze_keeps_readiness_and_reads_but_blocks_mutations(tmp_path, monkeypatch, http_database):
+    monkeypatch.setenv('ONSTAGE_LEGACY_GUESTS', '1')
     app = create_app(data_dir=tmp_path, public_origin="http://testserver", secure_cookie=False)
     with TestClient(app) as client:
         result = client.post("/api/session", json={})

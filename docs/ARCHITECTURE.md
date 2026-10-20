@@ -1,3 +1,23 @@
+> 2026-10-20 更新：当前应用/CLI仅PostgreSQL，SQLite数据入口已废弃且旧文件保持原样。PWA增加按房间显式授权Web Push，持久队列随消息事务提交、按订阅合并；单个有界发送worker与Hub通知独立。协议、VAPID Secret、恢复与平台边界见API_CONTRACT与SELF_HOSTED。赞踩用跨局稳定身份账本限额，防刷阈值不经普通API暴露。
+
+# 0.9 账户与社区实现边界
+
+新用户端/管理端位于 apps/web 与 apps/admin，React/TypeScript/Vite独立输出 build/web、build/admin。packages/api-client负责Cookie/CSRF/运行时地址；packages/media复用经过验证的素材哈希与原图回退。新壳通过同源 /play/index.html 复用原聊天状态机；这是渐进迁移的过渡架构，尚未把聊天完整改为React。原ACK/sync同逻辑对账、身份范围、成员/频道/client_message_id、草稿和游标均保留。
+
+Python按accounts、room_features、community、telemetry拆分领域模块，由Store组合并共享原短事务与PG房间行锁。为避免破坏旧外键、成员ID与消息幂等，users关联稳定principal_session_id；该sessions行没有可恢复的bearer且不含登录名，实际登录在auth_sessions中独立轮换/撤销。这是明确的身份桥接，后续可另行展开user外键迁移；不是继续把登录会话当账户。
+
+PG写锁按稳定principal而非设备令牌分组，房间状态/抢角/场景/消息仍同事务；社区按账户串行限流，管理操作留account_audit。用户名、账号ID不进入普通成员DTO/分享；评分公开聚合，赞踩和举报管理专用。数据库级唯一约束保护规范化用户名、每局评分、成员评价、分享选择与场景操作幂等。
+
+Alembic revision 20261020_01追加账户/房间/社区表，保留base schema4。生产必须独立迁移，启动和ready核验版本，不由Pod自动DDL。SQLite首次扩展旧schema4前留一致性备份。快照v2覆盖全部新表、身份哈希、快照与权限；兼容导入完整v1旧库，禁止非空目标恢复。SQLite/D1/离线旧版合同仍在，D1/离线没有本版本新账户功能。
+
+在线以90秒账户/设备租约判定，房间租约绑定实际auth_session；同账户多设备去重。房主与当前演员均离线后再观察10分钟；旁观者不续局、临时断线不退角。进程启动或调度长停顿重置观察，避免服务故障结束对局。每20秒最多扫描200房轮转处理，确认结束同事务写系统事件；因此不是断线第600秒必然精确触发。
+
+排名分页存5分钟有界房间ID快照，同条件复用并在每页重检当前权限；隐藏和私密权限不被旧快照绕过。该版本面向千级累计房间，仍不支持多副本/多worker，也不宣称千个活跃房并发。单进程Hub的通知、在线和连接限制保持原边界。
+
+Python功能/接口与恢复验收稳定后再评估语言替换；先按数据库与端到端耗时判断瓶颈。若确需替换，使用同一OpenAPI、消息ID/游标、权限与并发合同逐模块验证，不能凭语言基准推断实际收益。原生客户端继续暂缓，PWA沿用公开美术缓存。
+
+---
+
 # Onstage 0.8 架构
 
 ## 0.8资源、列表和渲染

@@ -111,7 +111,7 @@ def test_old_schema_upgrade_preserves_rows_and_creates_verified_backup(tmp_path,
     before = fingerprint_legacy(path)
     store = make_store(directory)
     store.initialize()
-    assert store.ready() == {"status": "ready", "schema_version": 4}
+    assert store.ready() == {"status": "ready", "schema_version": 4, "community_revision": "20261020_02"}
     assert store.get_session("legacy-host-token")["csrf_token"] == "legacy-host-csrf"
     assert store.get_session("legacy-actor-token")["authenticated"] is True
     assert store.get_session("legacy-host-token")["requires_nickname"] is True

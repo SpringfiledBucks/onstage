@@ -8,9 +8,9 @@
   let operation;
   const state = { supported: false, registered: false, busy: false, total: 0, completed: 0, failed: 0, cached: 0, cachedBytes: 0, error: "", message: "美术缓存不会保存聊天记录；多人对戏仍需联网。" };
   const publish = (patch = {}) => { Object.assign(state, patch); try { listener({ ...state }); } catch { /* UI cannot break downloads. */ } return { ...state }; };
-  function rpc(type, extra = {}) {
+  function rpc(type, extra = {}, targetWorker = registration?.active) {
     return new Promise((resolve, reject) => {
-      const worker = registration?.active;
+      const worker = targetWorker;
       if (!worker) { reject(new Error("美术缓存尚未就绪，请稍后重试。")); return; }
       const channel = new MessageChannel();
       const timer = setTimeout(() => { channel.port1.close(); reject(new Error("美术缓存请求超时，请重试。")); }, 20000);
@@ -43,7 +43,7 @@
   }
   async function refreshStatus() {
     if (!registration?.active) return publish();
-    try { return publish(await rpc("ARTWORK_STATUS")); } catch (error) { return publish({ error: error.message }); }
+    try { return publish({ ...await rpc("ARTWORK_STATUS"), updateAvailable: Boolean(registration.waiting) }); } catch (error) { return publish({ error: error.message }); }
   }
   async function init({ onStatus } = {}) {
     if (typeof onStatus === "function") listener = onStatus;
@@ -51,7 +51,13 @@
     if (!state.supported) return publish({ message: "此环境不支持持久美术缓存；请使用 HTTPS 或 localhost。多人对戏仍需联网。" });
     try {
       registration = await navigator.serviceWorker.register("/sw.js", { scope: "/", updateViaCache: "none" });
-      publish({ registered: true, error: "" });
+      publish({ registered: true, error: "", updateAvailable: Boolean(registration.waiting) });
+      registration.addEventListener?.("updatefound", () => {
+        registration.installing?.addEventListener("statechange", () => {
+          if (registration.waiting) publish({ updateAvailable: true });
+        });
+      });
+      navigator.serviceWorker.addEventListener?.("controllerchange", () => { void refreshStatus(); });
       // Do not await ready indefinitely: installation may fail or the device may go offline.
       if (!registration.active) {
         const worker = registration.installing || registration.waiting;
@@ -74,7 +80,12 @@
           while (!cancelled && next < entries.length) {
             const item = entries[next++];
             try { await rpc("ARTWORK_CACHE", { url: item.url }); if (!cancelled) publish({ completed: state.completed + 1 }); }
-            catch { if (!cancelled) publish({ failed: state.failed + 1 }); }
+            catch (error) {
+              if (!cancelled) {
+                console.warn("Onstage public artwork cache failure:", String(error?.message || "unknown").slice(0, 160));
+                publish({ failed: state.failed + 1 });
+              }
+            }
           }
         };
         await Promise.all(Array.from({ length: Math.min(3, entries.length) }, runner));
@@ -92,5 +103,13 @@
     try { await rpc("ARTWORK_CLEAR"); return publish({ cached: 0, cachedBytes: 0, error: "", message: "本应用美术缓存已清除；聊天身份和草稿未改动。" }); }
     catch (error) { return publish({ error: error.message }); }
   }
-  window.OnstagePWA = { init, downloadArtwork, cancelDownload, clearArtwork, getStatus: () => ({ ...state }), refreshStatus };
+  async function activateUpdate() {
+    if (operation) return publish({ error: "请先完成或取消当前美术下载。" });
+    if (!registration?.waiting) return refreshStatus();
+    try {
+      await rpc("ARTWORK_ACTIVATE", {}, registration.waiting);
+      return publish({ updateAvailable: false, error: "", message: "美术缓存服务已更新；聊天与草稿无需重载。" });
+    } catch { return publish({ error: "缓存服务更新未完成，请稍后重试。" }); }
+  }
+  window.OnstagePWA = { init, downloadArtwork, cancelDownload, clearArtwork, activateUpdate, getStatus: () => ({ ...state }), refreshStatus };
 })();

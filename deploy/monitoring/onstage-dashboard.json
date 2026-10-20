@@ -1,0 +1,126 @@
+{
+  "id": null,
+  "uid": "onstage-service",
+  "title": "Onstage Service",
+  "tags": ["onstage", "service"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": {"from": "now-6h", "to": "now"},
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "label": "Prometheus",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {},
+        "refresh": 1,
+        "hide": 0
+      },
+      {
+        "name": "job",
+        "label": "Job",
+        "type": "query",
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "query": "label_values(onstage_http_requests_total, job)",
+        "refresh": 1,
+        "includeAll": false,
+        "multi": false,
+        "current": {}
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Registered users",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [{"expr": "onstage_registered_users", "legendFormat": "registered", "refId": "A"}],
+      "gridPos": {"h": 5, "w": 6, "x": 0, "y": 0}
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Online users",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [{"expr": "onstage_online_users", "legendFormat": "online", "refId": "A"}],
+      "gridPos": {"h": 5, "w": 6, "x": 6, "y": 0}
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Rooms by state",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [{"expr": "onstage_rooms", "legendFormat": "{{status}}", "refId": "A"}],
+      "gridPos": {"h": 5, "w": 12, "x": 12, "y": 0}
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "HTTP request rate and errors",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {"expr": "sum by (status_class) (rate(onstage_http_requests_total[5m]))", "legendFormat": "{{status_class}}", "refId": "A"},
+        {"expr": "sum(rate(onstage_http_requests_total{status_class=\"5xx\"}[5m]))", "legendFormat": "5xx errors", "refId": "B"}
+      ],
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 5}
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "HTTP p50 / p95 latency",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {"expr": "histogram_quantile(0.50, sum by (le) (rate(onstage_http_request_duration_seconds_bucket[5m])))", "legendFormat": "p50", "refId": "A"},
+        {"expr": "histogram_quantile(0.95, sum by (le) (rate(onstage_http_request_duration_seconds_bucket[5m])))", "legendFormat": "p95", "refId": "B"}
+      ],
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 5}
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Database time p50 / p95",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {"expr": "histogram_quantile(0.50, sum by (le) (rate(onstage_database_operation_duration_seconds_bucket[5m])))", "legendFormat": "p50", "refId": "A"},
+        {"expr": "histogram_quantile(0.95, sum by (le) (rate(onstage_database_operation_duration_seconds_bucket[5m])))", "legendFormat": "p95", "refId": "B"}
+      ],
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 13}
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "WebSocket connections and stage speech",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {"expr": "onstage_websocket_connections", "legendFormat": "connections", "refId": "A"},
+        {"expr": "onstage_stage_speech_messages", "legendFormat": "stage speech total", "refId": "B"}
+      ],
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 13}
+    },
+    {
+      "id": 8,
+      "type": "stat",
+      "title": "Open reports / feedback",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [
+        {"expr": "onstage_open_reports", "legendFormat": "reports", "refId": "A"},
+        {"expr": "onstage_open_feedback", "legendFormat": "feedback", "refId": "B"}
+      ],
+      "gridPos": {"h": 5, "w": 12, "x": 0, "y": 21}
+    },
+    {
+      "id": 9,
+      "type": "stat",
+      "title": "All retained rooms",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "targets": [{"expr": "onstage_total_rooms", "legendFormat": "rooms", "refId": "A"}],
+      "gridPos": {"h": 5, "w": 12, "x": 12, "y": 21}
+    }
+  ],
+  "annotations": {"list": []},
+  "links": []
+}

@@ -90,7 +90,9 @@ class PostgresStore(Store):
                 else:
                     # All callers use this order. Session scope is a digest, never a credential.
                     if session_token:
-                        self._lock(raw, 'session:' + hashlib.sha256(session_token.encode()).hexdigest())
+                        principal = raw.execute(text('SELECT u.principal_session_id FROM auth_sessions a JOIN users u ON u.id=a.user_id WHERE a.token_hash=:hash'),
+                                                {'hash': hashlib.sha256(session_token.encode()).hexdigest()}).scalar()
+                        self._lock(raw, 'session:' + (principal or hashlib.sha256(session_token.encode()).hexdigest()))
                     if admission:
                         self._lock(raw, 'admission:' + admission)
                     # Operator report resolution starts with only a report ID.
@@ -124,3 +126,5 @@ class PostgresStore(Store):
             raw.execute(text("INSERT INTO schema_meta(key,value) VALUES('schema_version','4') ON CONFLICT(key) DO NOTHING"))
             raw.execute(text('INSERT INTO characters(id) VALUES(:id) ON CONFLICT(id) DO NOTHING'),
                         [{'id': item} for item in sorted(self.characters)])
+            from .extension_schema import migrate_extensions
+            migrate_extensions(raw)

@@ -1,0 +1,62 @@
+{
+  "project": "Onstage",
+  "version": "0.9.0",
+  "updated_at_utc": "2026-10-20T10:13:12.175099+00:00",
+  "status": "PARTIAL: local implementation/regressions and public branch push VERIFIED; hosted CI BLOCKED; external Web Push/device/production acceptance NOT VERIFIED",
+  "scope": "PostgreSQL-only service and operational entrypoints; opt-in PWA Web Push; room/voter/target feedback uniqueness and private cross-room anti-abuse ledger.",
+  "baseline_commit": "f9bdc9dddc20b23ab5dd516a625f0feef1369055",
+  "implemented": {
+    "database": "DATABASE_URL required and PostgreSQL-only. No runtime SQLite fallback, no SQLite import CLI, old files untouched. Legacy SQLite domain code retained for historical algorithm regressions only.",
+    "feedback": "One effective row per game/voter/target. Stable identity pair cumulative game cap enforced transactionally across devices and rooms; edits do not add rows, withdrawal retains occupancy, same-value retry is idempotent. Threshold and remaining count are absent from normal UI/API.",
+    "notifications": "Explicit browser permission and per-room consent. Active Service Worker protocol handshake prevents false enabling on old installed PWA. Identifier-only AES128GCM Web Push, fixed visible notification text and same-origin click routing.",
+    "delivery": "Transactional durable outbox coalesced per subscription. One bounded sender, deadlines, retry cap, restart leases, HTTP sync recovery. Rechecks room/channel membership, follows and bans before dispatch; logout/ban removes private subscription records.",
+    "security": "Exact trusted provider HTTPS hosts, redirects forbidden, provider response bodies not read/logged, private endpoint/key binding cannot be claimed by a different login session. VAPID private PEM supplied via mounted Secret and never auto-generated on startup.",
+    "migration": "Explicit Alembic 20261020_02; v3 backup includes notification secrets/outbox and feedback ledger; controlled v1/v2 PG snapshot recovery preserved and v2 feedback ledger backfilled."
+  },
+  "verification": {
+    "postgres_only_http": "50 passed, 1 Starlette dependency deprecation warning: real isolated PG HTTP/WS, message/role/privacy, process restart and restore; no SQLite HTTP fallback",
+    "push_pg_crypto": "15 passed, 1 warning: actual PG consent/coalescing/retry/lease/concurrent claims/kick/logout/ban, subscription isolation/CSRF/CORS, real VAPID/AES encryption decrypted by receiver with simulated provider transport, old v2 migration/recovery and non-overwriting key generation",
+    "feedback_pg": "5 passed: cross-room cumulative cap, stable account across tokens, concurrent last-slot contention, withdrawal/retry and idempotent migration backfill",
+    "frontend": "12 interaction tests passed; TypeScript and both frontend builds passed; worker push/click/upgrade protocol VM passed; existing PWA cache VM passed",
+    "browser": "Actual IAB loopback + new isolated PostgreSQL schema: synthetic registration, preferences skip, notification settings explain unavailable VAPID config and disabled enable button; retained185-art cache visible. No OS permission prompt accepted or external subscription created.",
+    "screenshot": "reports/push-settings-20261020.png",
+    "full_python": {
+      "status": "VERIFIED across full run plus targeted startup-error recheck",
+      "full_run": "260 passed, 2 skipped, 3 HTTP server-fixture setup errors, 1 Starlette warning; 5740.55s elapsed",
+      "setup_errors": "Three guest_moderation fixtures hit the existing12s process-readiness deadline with empty server logs during a long interrupted-duration run. Exact external scheduling cause was not proven.",
+      "unchanged_code_recheck": "Same three tests passed in19.66s without changing code, assertions or deadlines",
+      "covered_total": "263 passed across the final full run and three targeted rechecks; 2 Windows symlink privilege skips. This is not represented as a single all-green full-run invocation.",
+      "command": "python -m pytest -q; then the three named startup-error tests in tests/test_guest_moderation.py with the same isolated PostgreSQL configuration"
+    },
+    "first_full_run": "257 passed, 4 failed, 2 Windows symlink skips. Three failures were hardcoded previous migration revision; one public-source subprocess intentionally removed DATABASE_URL. Updated these tests to the new contract without weakening business assertions; migrations9 and public-source actual PG1 passed on targeted rerun. Initial failure log retained locally.",
+    "dependency_lock": "pip check passed; workflow YAML parsed; actual OpenAPI regenerated without a database connection."
+  },
+  "not_verified": [
+    "External browser push-provider acceptance/delivery, physical phone background/lockscreen, mainland/venue push network and OS-installed PWA",
+    "Production VAPID Secret, production migration and deployment are not configured or performed",
+    "Actual GitHub run blocked before any validation step by account billing lock. Container runtime/publication and registry digest remain NOT VERIFIED.",
+    "Notifications are best-effort hints, may be coalesced/delayed/suppressed by browser or OS and do not prove peer delivery/read status",
+    "Existing legacy npm toolchain audit advisories remain unchanged from prior candidate"
+  ],
+  "github": {
+    "branch": "feature/accounts-community",
+    "pull_request": "https://github.com/SpringfiledBucks/onstage/pull/1",
+    "push_status": "VERIFIED",
+    "actions_status": "BLOCKED before any validation step",
+    "image_digest": null,
+    "implementation_commit": "8cb767e0c03b0a2804afcde40c5bca12e1602660",
+    "actions_run": "https://github.com/SpringfiledBucks/onstage/actions/runs/39406099090",
+    "reason": "The job was not started because your account is locked due to a billing issue.",
+    "validation_steps_executed": 0
+  },
+  "production_or_old_sqlite_modified": false,
+  "references": [
+    "https://developer.mozilla.org/en-US/docs/Web/API/Push_API",
+    "https://github.com/web-push-libs/pywebpush"
+  ],
+  "local_preview": {
+    "scope": "Loopback synthetic isolated PG only; retained for user browser preview, not production deployment",
+    "frontend": "http://127.0.0.1:8840/",
+    "external_push_configured": false
+  }
+}

@@ -235,8 +235,7 @@ def test_pg_http_websocket_and_process_replacement(pg_factory, tmp_path):
     store = pg_factory()
     root = tmp_path / 'http-runtime'
     root.mkdir()
-    instance = LiveServer(root)
-    instance.env['DATABASE_URL'] = store.settings.database_url
+    instance = LiveServer(root, database_url=store.settings.database_url)
     instance.start()
     host = actor = None
     try:

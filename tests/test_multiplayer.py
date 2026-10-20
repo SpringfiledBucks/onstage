@@ -1,7 +1,6 @@
 import concurrent.futures
 import json
 import secrets
-import sqlite3
 import time
 
 import httpx
@@ -278,22 +277,27 @@ def test_process_restart_and_consistent_backup_restore(server, people, tmp_path)
     assert room["me"]["character_id"] == "mygo.anon"
     assert message["id"] in {m["id"] for m in actor.get(
         f"/api/rooms/{room_id}/messages")["messages"]}
-    from tools.backup import make_backup
-    backup = tmp_path / "backups" / "verified.sqlite3"
-    result = make_backup(server.data_dir / "onstage.sqlite3", backup)
-    assert result["integrity"] == "ok"
-    with pytest.raises(ValueError):
-        make_backup(server.data_dir / "onstage.sqlite3", backup)
+    from tools.database import backup as make_backup, read_snapshot, restore
+    from conftest import new_http_database
+    backup = tmp_path / "backups" / "verified-private.json"
+    result = make_backup(server.store, backup)
+    assert result["row_counts"]["messages"] > 0
+    with pytest.raises(FileExistsError):
+        make_backup(server.store, backup)
     from hashlib import sha256
     assert sha256(backup.read_bytes()).hexdigest() == result["sha256"]
-    with sqlite3.connect(backup) as connection:
-        assert connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
-    # Restore to the stopped local test server; this is never a production restore.
+    # Restore into another empty generated PostgreSQL schema. No tables/files
+    # are removed to manufacture an empty destination.
     server.stop()
-    for path in server.data_dir.glob("onstage.sqlite3*"):
-        path.unlink()
-    import shutil
-    shutil.copyfile(backup, server.data_dir / "onstage.sqlite3")
+    recovered, cleanup = new_http_database(tmp_path / 'recovered')
+    original_cleanup = server.cleanup_database
+    def cleanup_both():
+        cleanup()
+        original_cleanup()
+    server.cleanup_database = cleanup_both
+    restore(recovered, read_snapshot(backup))
+    server.store = recovered
+    server.env['DATABASE_URL'] = recovered.settings.database_url
     server.start()
     assert message["id"] in {m["id"] for m in actor.get(
         f"/api/rooms/{room_id}/messages")["messages"]}
@@ -306,9 +310,9 @@ def test_session_expiry_blocks_http_and_closes_existing_websocket(server, people
     with actor.websocket(room_id) as connection:
         connection.recv(timeout=2)
         # Make this one persisted session expire without delaying the whole suite.
-        with sqlite3.connect(server.data_dir / "onstage.sqlite3") as database:
-            database.execute("UPDATE sessions SET expires_at=? WHERE token_hash=?",
-                             ("2000-01-01T00:00:00.000000Z", sha256(raw_cookie.encode()).hexdigest()))
+        with server.store._transaction(write=True) as database:
+            database.execute("UPDATE sessions SET expires_at=:expires WHERE token_hash=:token",
+                             {"expires":"2000-01-01T00:00:00.000000Z", "token":sha256(raw_cookie.encode()).hexdigest()})
         assert actor.client.get("/api/session").status_code == 401
         with pytest.raises(ConnectionClosed):
             while True:

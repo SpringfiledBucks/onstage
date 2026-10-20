@@ -27,14 +27,15 @@ ROOT_FILES = {
     'requirements.txt', 'requirements-dev.txt', 'requirements-assets.txt', 'pyproject.toml', 'package.json',
     'package-lock.json', 'tsconfig.json', 'vite.config.ts', 'next.config.ts',
     'drizzle.config.ts', 'cloudflare-env.d.ts', 'raw-imports.d.ts', '.gitignore',
-    '.dockerignore', '.gitattributes', '.env.example', 'Dockerfile', 'compose.dev.yaml',
+    '.dockerignore', '.gitattributes', '.env.example', 'Dockerfile', 'Dockerfile.frontend', 'compose.dev.yaml',
 }
-SOURCE_DIRS = {'app', 'edge', 'static', 'preview', 'db', 'drizzle', 'scripts', 'build', 'lib', 'tools', 'tests', 'deploy', '.github'}
+SOURCE_DIRS = {'app', 'apps', 'packages', 'edge', 'static', 'preview', 'db', 'drizzle', 'scripts', 'build', 'lib', 'tools', 'tests', 'deploy', '.github'}
 SOURCE_SUFFIXES = {'.py', '.js', '.cjs', '.mjs', '.ts', '.tsx', '.sql', '.css', '.html', '.sh', '.yaml', '.yml', '.toml', '.md', '.LICENSE'}
 DOC_FILES = {
     'API_CONTRACT.md', 'ARCHITECTURE.md', 'RUNBOOK.md', 'DEMO.md', 'OPEN_SOURCE.md',
     'SELF_HOSTED.md', 'VISUAL_GUIDE.md', 'REQUIREMENTS_V06.md', 'REQUIREMENTS_V05.md',
     'CHANGELOG.md', 'SITES_ITERATION.md', 'acceptance.json',
+    'openapi.json',
 }
 DEPLOY_TEMPLATES = {'deploy/onstage.service', 'deploy/Caddyfile.snippet', 'deploy/nginx-site.conf.example'}
 EXCLUDED_PARTS = {'__pycache__', '.pytest_cache', 'node_modules', 'private', 'backups', 'data', '.git', '.openai', 'vendor', 'reports'}
@@ -112,6 +113,14 @@ def allowed_source(path: Path) -> bool:
         return True
     if parts[0] not in SOURCE_DIRS or (parts[:2] == ('static', 'assets')):
         return False
+    if parts[:2] in {('build','web'), ('build','admin')}:
+        return False
+    if parts[0] == 'apps' and path.suffix == '.json':
+        return True
+    if parts[:2] == ('deploy','frontend') and path.suffix == '.template':
+        return True
+    if path.as_posix() == 'deploy/monitoring/onstage-dashboard.json':
+        return True
     if path.as_posix() == 'static/onstage-mark.svg' or path.as_posix() == 'app/catalog.json':
         return True
     if path.as_posix() == 'static/manifest.webmanifest' or (parts[:2] == ('static', 'icons') and path.suffix == '.png'):

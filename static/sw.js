@@ -19,7 +19,7 @@ function artworkURL(value) {
 function cacheRequest(url) { return new Request(url.href, { credentials: "omit" }); }
 async function putArtwork(url, response, epoch) {
   if (!response.ok || response.redirected || !["basic", "default"].includes(response.type) ||
-      response.headers.get("Content-Type")?.split(";")[0].trim() !== "image/webp") throw new Error("invalid_artwork_response");
+      response.headers.get("Content-Type")?.split(";")[0].trim() !== "image/webp") throw new Error("invalid_artwork_response:" + response.status + ":" + response.type + ":" + (response.headers.get("Content-Type") || "missing"));
   const declared = Number(response.headers.get("Content-Length"));
   if (declared > MAX_FILE_BYTES) throw new Error("artwork_too_large");
   const bytes = await response.arrayBuffer();
@@ -62,10 +62,18 @@ async function fetchArtwork(url, signal, explicit = false) {
   if (explicit) downloads.add(abort);
   const timer = setTimeout(cancel, 15000);
   try {
-    const response = await fetch(url.href, { credentials: "omit", signal: abort.signal, redirect: "error" });
+    let response = await fetch(url.href, { credentials: "omit", signal: abort.signal, redirect: "error" });
     // A cache/quota failure must not prevent normal artwork from displaying.
     const copy = response.clone();
-    try { await putArtwork(url, copy, epoch); } catch (error) { if (explicit) throw error; }
+    try { await putArtwork(url, copy, epoch); } catch (error) {
+      // A prior host may have cached a wrong MIME/body under an immutable URL.
+      // One explicit retry bypasses only the HTTP cache; quota failures do not
+      // trigger extra transfers, and a bad origin response still fails closed.
+      if (explicit && (response.ok || response.status === 404) && (error.message.startsWith("invalid_artwork_response:") || error.message === "artwork_hash_mismatch")) {
+        response = await fetch(url.href, { credentials: "omit", signal: abort.signal, redirect: "error", cache: "reload" });
+        await putArtwork(url, response.clone(), epoch);
+      } else if (explicit) throw error;
+    }
     return response;
   } finally {
     clearTimeout(timer); downloads.delete(abort); signal?.removeEventListener("abort", cancel);
@@ -91,6 +99,10 @@ self.addEventListener("message", (event) => {
   if (!port || !event.source?.url || new URL(event.source.url).origin !== self.location.origin) return;
   const run = async () => {
     switch (event.data?.type) {
+      case "PUSH_PROTOCOL": return { version: 1 };
+      case "ARTWORK_ACTIVATE":
+        await self.skipWaiting();
+        return { activated: true };
       case "ARTWORK_STATUS": return status();
       case "ARTWORK_CACHE": {
         const url = artworkURL(event.data.url);
@@ -109,4 +121,40 @@ self.addEventListener("message", (event) => {
     }
   };
   event.waitUntil(run().then((result) => port.postMessage({ ok: true, result }), (error) => port.postMessage({ ok: false, error: String(error.message || "artwork_error") })));
+});
+
+// Push payloads contain identifiers only. Never render message content or trust a supplied URL.
+function pushRoom(value) {
+  return value && value.type === 'room_message' && typeof value.room_id === 'string' &&
+    /^[a-f0-9]{32}$/.test(value.room_id) ? value.room_id : null;
+}
+self.addEventListener('push', (event) => {
+  let payload;
+  try { payload = event.data?.json(); } catch { /* Still display a generic visible notification. */ }
+  const room = pushRoom(payload);
+  event.waitUntil(self.registration.showNotification('Onstage', {
+    body: '你关注的房间有新消息',
+    icon: '/static/onstage-mark.svg',
+    tag: room ? 'onstage-room-' + room : 'onstage-message',
+    data: { room_id: room },
+  }));
+});
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const room = event.notification.data?.room_id;
+  const path = typeof room === 'string' && /^[a-f0-9]{32}$/.test(room) ? '/room/' + room : '/';
+  const target = new URL(path, self.location.origin).href;
+  event.waitUntil((async () => {
+    const windows = await self.clients.matchAll({type: 'window', includeUncontrolled: true});
+    const existing = windows.find(client => {
+      try { return client.frameType !== 'nested' && new URL(client.url).origin === self.location.origin; } catch { return false; }
+    });
+    if (existing) {
+      try {
+        const navigated = await existing.navigate(target);
+        if (navigated) { await navigated.focus(); return; }
+      } catch { /* A closing tab must not swallow the notification click. */ }
+    }
+    await self.clients.openWindow(target);
+  })());
 });

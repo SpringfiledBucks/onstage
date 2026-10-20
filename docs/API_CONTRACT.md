@@ -1,3 +1,41 @@
+## 2026-10-20 PostgreSQL-only、消息通知与评价防刷
+
+运行入口缺少DATABASE_URL或传SQLite URL时明确失败，不生成/导入旧SQLite；旧快照/代码说明保留历史属性。
+
+- 登录GET `/api/notifications/config` 返回 `{enabled,public_key}`，仅公开VAPID公钥；未配置时enabled=false。GET `/api/notifications/rooms` 返回当前可接收提醒的 `{room_ids}`。
+- POST `/api/notifications/subscriptions` 接受 `{endpoint,keys:{p256dh,auth}}`，返回 `{id}`；只允许HTTPS可信推送provider，绑定当前账户和登录设备，不可接管他人endpoint。DELETE `/api/notifications/subscriptions/{id}` 仅删除当前设备自己的绑定。所有写入需Cookie、CSRF与准确可信Origin；DELETE预检受同一白名单约束。
+- POST `/api/rooms/{id}/notifications {enabled}` 仅活动成员可开启；关闭清待发提醒。消息持久化与有界合并提醒同事务，重试已确认消息不重复入队。投递前重检权限，通知无正文/用户名/标题；浏览器显示与平台网络另行验收，不提供送达/已读承诺。
+- 赞踩按room/voter/target唯一。跨局同一双方的防刷占用由私有永久账本记录，撤回不清占用、改票不增量；相同请求重试幂等。API仅返回value，拒绝时通用429，不输出阈值/剩余额度，普通用户不见他人赞踩。
+
+---
+
+# 0.9 账户模式补充（优先于下方0.8访客写入合同）
+
+实际请求结构可由 `python tools/export_openapi.py` 导出至 `docs/openapi.json`，不开放生产文档端点。新功能属于Python服务，D1/离线适配保持旧合同；不将同一旧版本号当作新功能跨后端等价。
+
+- 默认访客仅可GET公开 `/api/catalog`、`/api/scenarios`、`/api/rooms`、`/api/about`、有效 `/api/shares/{slug}`。公开目录不是整局聊天公开许可。`mine`需要账户。
+- `POST /api/session {}`只建立最长15分钟的登录前CSRF会话；已登录时返回当前会话与稳定storage_scope。新用户端匿名浏览不主动建会话，注册/登录前按需建立。成功认证消费无历史的预认证会话。
+- `POST /api/auth/register {username,password}`；`POST /api/auth/login {username,password,remember}`；均需登录前Cookie和X-CSRF-Token。响应设置HttpOnly Cookie，JSON是私有me（含username、admin、preferences、onboarding_done、csrf_token、storage_scope）。`GET /api/auth/me`未登录401；`POST /api/auth/logout {}`只撤销当前设备；封禁撤销全部设备，解封不恢复旧登录。
+- 用户名NFKC规范化、大小写折叠唯一，3–32字符；密码8–128字符、Argon2id。remember=false为浏览器会话Cookie且服务端12小时，true为30天；不保存明文密码或浏览器令牌。
+- `POST /api/auth/preferences {character_ids:[]}`可跳过；`POST /api/auth/heartbeat {}`维持90秒账户在线租约。
+- `POST /api/rooms`可在原创建字段上指定 `access:public|password|invite,password?`，房间、访问策略、房主成员与系统事件同事务提交；私密房不存在先公开的窗口。
+- `GET /api/rooms?limit=24&cursor=...&filter=all|active|ended|mine&sort=time|rating|dialogue&preferred=false`返回安全房间摘要、next_cursor、has_more。最大100/页；评分/对话量/偏好使用5分钟有界快照，每页重检权限。相同条件复用快照，刷新排序最多滞后5分钟；权限变化立即生效。不是1000活跃房容量承诺。
+- `GET /api/scenarios?limit=24&cursor=...`分页场景。房间详情、sync、messages及stream需要账户并遵守成员/频道权限。原消息client_message_id、幂等、ACK/sync统一对账与游标合同不变。
+- 房主POST `/rooms/{id}/access {access:public|password|invite,password?,share_enabled?}`，密码8–128字符；新私密配置默认关闭分享。`/unlock {password?,invite?}`成功取得入房授权；`/invites {expires_hours,max_uses}`返回只显示一次的随机邀请，1–168小时、1–100次；修改访问配置撤销旧邀请与入房授权，既有参与者保留历史权限。邀请解锁原样重试不重复消耗次数。
+- 房主POST `/rooms/{id}/recruitment {character_ids}`；`/scene {scenario_id,action_id}`。场景更新与通知同事务，action_id重复返回原事件且不得变更内容；角色范围固定于建房场景，不因背景切换强退。`/visibility {hidden}`只允许结束房隐藏/恢复公开列出，隐藏不等于删除或撤销分享。
+- `POST /rooms/{id}/heartbeat {connection_id}`为实际登录设备建立90秒租约；房主和当前演员全无有效租约后观察10分钟，事务重检后结束并只写一次事件。旁观者不续局，断线不退角；启动和任务长停顿重置观察窗口。单worker/单副本。
+- `GET /rooms/{id}/participants`仅历史参与者，返回房间内成员与本人member_id/share_allowed，允许退出后互动，不返回账户ID/登录名。
+- `POST /rooms/{id}/rating {rating:1..5}`限结束后的历史参与账户，每账户每局唯一，可更新；公开仅平均分和人数。
+- `POST /rooms/{id}/members/{member_id}/vote {value:-1|0|1}`禁止自评，0撤回，退出后仍允许；`/report {reason,details}`举报共同参与者。普通用户不可读取其他人的赞踩和举报详情；房主不获得站点管理权。
+- `POST /rooms/{id}/share-permission {allowed}`为作者本局舞台消息明确授权。POST `/rooms/{id}/shares {message_ids}`选择1–100条同局舞台speech（含贴纸），每位作者均须授权且房主允许分享；不含后台/用户名/客户端ID。返回随机slug和前端path。GET `/shares/{slug}`仅快照；作者撤回授权永久撤销既有相关分享。POST `/shares/{slug}/revoke`允许作者、创建者、管理员撤销。
+- `POST /api/feedback {text}`为开发者反馈；限登录用户并有独立限流。
+- 管理接口全部 `/api/admin/*`，要求服务端admin角色和准确管理Origin。分页GET users(search/banned/online)、rooms(user_id/status)、shares、reports(status)、member-feedback(room_id)、feedback(status)、audit。POST users/{id}/ban `{banned,note}`、shares/{slug}/revoke、reports/{id}/resolve、feedback/{id}/resolve `{status:resolved|dismissed,note}`；敏感写操作留审计。普通房主旧举报读取/处理入口在账户模式拒绝。
+- HTTP公开读允许有效HTTPS `*.neboer.site`，不含根域、非443端口、假后缀；这些来源的Cookie忽略。账户API与WS只允许准确可信Origin，管理Origin独立。凭据CORS回显具体Origin，写请求CSRF，生产Cookie使用__Host-且无Domain。开发Cookie名不同，不支持旧名注入新账户登录。
+- `/metrics`仅Bearer `ONSTAGE_METRICS_TOKEN`，不采用浏览器登录授权、不开放CORS。指标采样20秒，HTTP标签用路由模板，无用户/房间高基数标识。
+
+
+---
+
 > 0.7接手更新：生产目标为FastAPI/PostgreSQL，SQLite只作本地/旧库兼容，D1仍维护。PG必须先显式运行 tools/database.py migrate，应用不自动DDL；DATABASE_URL经Secret注入，运维工具读取同一目标。单副本单worker与消息契约不受持久化方言改变。ONSTAGE_WRITE_FROZEN=1阻止业务HTTP写入，需重启/发布后验证。下文0.6拓扑是历史，业务权限继续有效。
 
 # Onstage 昵称访客多人对戏接口与状态约定（schema 4）

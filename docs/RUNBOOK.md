@@ -1,3 +1,29 @@
+## 2026-10-20 通知与数据入口更新
+
+当前应用及运维CLI只使用PostgreSQL；旧SQLite文件不打开、不迁移、不删除。部署使用新库显式执行 `python tools/database.py migrate`，已有PostgreSQL数据先备份再升级到20261020_02；旧PG快照恢复仍受控支持。历史SQLite领域代码仅保留作回归参考，不是可部署运行模式。
+
+PWA Web Push按浏览器主动授权、按房间关注，默认关闭；通知固定提示“你关注的房间有新消息”，不含正文、角色名、用户名或房间标题。登录设备退出/封禁撤销其订阅，踢人/退场/后台角色变化在发送前复核。推送第三方仅接收加密标识；浏览器/系统/网络仍可阻止或延迟送达，Web Push不能代替HTTP游标补齐或证明对方已读。旧已安装PWA须先手动更新缓存服务，协议握手通过后才允许开启通知。
+
+由维护者在受限目录执行 `python tools/push_keys.py /restricted/onstage-vapid-private.pem` 生成并妥善备份稳定密钥；只读挂载为Secret，配置ONSTAGE_VAPID_PRIVATE_KEY_FILE和ONSTAGE_VAPID_SUBJECT。不将PEM、订阅endpoint/keys、私有快照上传仓库/日志/指标；密钥丢失或更换需要浏览器重新订阅。未配置时UI明确不可用，不影响聊天。API单副本有一个受控推送worker，队列与消息同事务提交，每个订阅仅保留最新提醒；总订阅与每账户/关注房间均有界，网络超时与重试有界，过期/失效订阅清除，异常重启通过租约恢复。短时通知合并可能只跳到最后更新房间；其他房间消息仍可同步完整读取。
+
+公网使用HTTPS和准确可信前端Origin；服务端需能访问浏览器推送服务HTTPS，默认只允许FCM/Mozilla/Apple等明确主机且禁止重定向。扩展provider须维护者单独配置准确可信host，不开放任意用户URL。手机后台能力还受浏览器、系统权限、主屏安装和推送服务网络可达性影响；大陆及现场网络必须实机验证，不保证绕过系统限制。当前不宣称外部推送通道已验收。
+
+赞踩有效记录保持“对局＋评价者＋被评价者”唯一；服务端对同一双方跨局累计设置防刷上限，改票不新增记录、撤回保留占用，相同请求重试不消耗额度。普通用户看不到额度、阈值或他人评价；管理员仍能查看评价记录。
+
+---
+
+# 0.9 运维优先说明
+
+本版本新增账户、私密房、作者授权分享与管理权限，配置和迁移按SELF_HOSTED的0.9部分执行。用户与管理前端独立部署，8765为API；ONSTAGE_FRONTEND_ORIGINS/ONSTAGE_ADMIN_ORIGINS只填准确可信Origin。*.neboer.site仅公开读，不是登录白名单。
+
+新版本账号与登录会话分离；首次管理员由维护命令授予。ban撤销所有登录，解封不恢复旧token。不要在聊天/工单/日志输出密码、Cookie、快照或真实数据库连接串。ONSTAGE_METRICS_TOKEN单独注入Prometheus Secret。
+
+工具database.py使用同一DATABASE_URL，backup兼容完整旧schema4与新v3，restore仅空目标并验证所有新表；生产PG独立执行Alembic迁移，启动只检查。当前服务/运维入口只接受PostgreSQL，缺DATABASE_URL立即失败；旧SQLite原样保留、不再启动写入或导入历史。首次新站迁移空PG，从新账户和新房间开始。旧包/原图不删除。正式切换和回滚需完整库恢复计划，不能仅替换代码。
+
+在线是90秒租约与有效账户会话，不是连接数。服务重启重置全离线观察期；单副本更新须Recreate。自动结束事件、场景切换、权限与消息都必须实际验证，不能用health代签。
+
+---
+
 # Onstage 0.8 运行与恢复
 
 ## 美术、PWA与分页更新
@@ -46,9 +72,9 @@ python tools/database.py restore /restricted/pre-release.json
 python tools/database.py verify /restricted/pre-release.json
 ```
 
-restore在事务内拒绝覆盖已有业务数据，逐字段检查ID、外键、游标与快照，校正实际identity序列。SQLite schema4 可用 import-sqlite 导入；旧schema须先在独立SQLite副本按旧迁移机制备份升级。D1 onstage-confidential-state-v1 用restore接入，旧D1业务导出不含临时presence和rate_events，不能称为完整限流窗口恢复。
+restore在事务内拒绝覆盖已有业务数据，逐字段检查ID、外键、游标与快照，校正实际identity序列。当前不导入SQLite历史，import-sqlite已移除。历史D1快照解析保留回归用途；本轮新站从空PostgreSQL开始，不执行历史身份转接。
 
-旧 SQLite 文件备份仍支持 tools/backup.py SOURCE DESTINATION；使用 SQLite backup API，不只复制活跃WAL主文件。DATABASE_URL已配置时，维护工具不得悄悄修改另一份SQLite。举报运维 tools/moderate.py 读取同一连接配置；处理输出为私密材料，不能投屏或发布。
+旧SQLite文件原样保留，tools/backup.py CLI已停用并明确报错；当前运维统一使用PostgreSQL DATABASE_URL，不再写另一份SQLite。举报运维 tools/moderate.py 读取同一连接配置；处理输出为私密材料，不能投屏或发布。
 
 ## 唯一主站切换
 

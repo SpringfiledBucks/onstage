@@ -1,0 +1,27 @@
+map "$status:$uri" $onstage_cache_control {
+    default "no-store";
+    ~^(200|304):/static/assets/optimized/ "public, max-age=31536000, immutable";
+    ~^(200|304):/assets/ "public, max-age=31536000, immutable";
+}
+server {
+    listen 8080;
+    server_name _;
+    root /usr/share/nginx/html;
+    index index.html;
+    server_tokens off;
+    gzip on;
+    gzip_types application/javascript application/json text/css image/svg+xml;
+    add_header X-Content-Type-Options nosniff always;
+    add_header Referrer-Policy no-referrer always;
+    add_header Service-Worker-Allowed / always;
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ${ONSTAGE_API_ORIGIN} ${ONSTAGE_WS_ORIGIN}; frame-src 'self'; frame-ancestors 'self'; object-src 'none'; base-uri 'none'; form-action 'self'" always;
+    add_header Cache-Control $onstage_cache_control always;
+    location = /healthz { access_log off; return 200 'ok'; }
+    location = /sw.js { try_files /static/sw.js =404; }
+    location /static/assets/optimized/ { try_files $uri =404; }
+    location /assets/ { try_files $uri =404; }
+    location /static/ { try_files $uri =404; }
+    location /play/ { try_files $uri =404; }
+    location /api/ { return 404; }
+    location / { try_files $uri $uri/ /index.html; }
+}

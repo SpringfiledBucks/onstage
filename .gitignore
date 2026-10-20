@@ -12,6 +12,8 @@ reports/private/
 *.sqlite3-wal
 *.sqlite3-shm
 *.log
+*.pem
+*.key
 
 dist/
 dist-*/
@@ -29,5 +31,7 @@ public/
 next-env.d.ts
 *.tsbuildinfo
 coverage/
+/build/web/
+/build/admin/
 .dev.vars
 .dev.vars.*

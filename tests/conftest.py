@@ -9,20 +9,78 @@ import time
 import httpx
 import pytest
 
+# Importing app.main constructs the ASGI object but must never connect to a
+# fallback database. Actual HTTP fixtures replace this non-connecting DSN with
+# a generated schema in the separately authorized test database.
+os.environ.setdefault("DATABASE_URL", "postgresql+psycopg://onstage@127.0.0.1:1/onstage_import_only")
+
+
+def new_http_database(data_dir):
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.engine import make_url
+    from app.postgres import PostgresStore, postgres_url
+    from app.security import Settings
+    value = os.environ.get("ONSTAGE_TEST_DATABASE_URL")
+    if not value:
+        pytest.fail("ONSTAGE_TEST_DATABASE_URL is required for HTTP integration; no SQLite fallback")
+    admin = create_engine(postgres_url(value))
+    schema = 'onstage_http_' + secrets.token_hex(10)
+    with admin.begin() as connection:
+        connection.execute(text(f'CREATE SCHEMA {schema}'))
+    url = make_url(postgres_url(value)).update_query_dict({'options': '-csearch_path=' + schema})
+    store = PostgresStore(Settings.from_values(data_dir=data_dir, public_origin='http://localhost',
+                                              database_url=url.render_as_string(hide_password=False)))
+    try:
+        store.migrate()
+    except BaseException:
+        store.close()
+        with admin.begin() as connection:
+            connection.execute(text(f'DROP SCHEMA {schema} CASCADE'))
+        admin.dispose()
+        raise
+    def cleanup():
+        store.close()
+        with admin.begin() as connection:
+            connection.execute(text(f'DROP SCHEMA {schema} CASCADE'))
+        admin.dispose()
+    return store, cleanup
+
+
+@pytest.fixture
+def http_database(tmp_path, monkeypatch):
+    store, cleanup = new_http_database(tmp_path)
+    monkeypatch.setenv('DATABASE_URL', store.settings.database_url)
+    try:
+        yield store
+    finally:
+        cleanup()
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
 class LiveServer:
-    def __init__(self, root):
+    def __init__(self, root, database_url=None):
         self.root = Path(root)
         self.data_dir = self.root / "data"
         self.data_dir.mkdir()
+        self.cleanup_database = None
+        if database_url is None:
+            self.store, self.cleanup_database = new_http_database(self.data_dir)
+            database_url = self.store.settings.database_url
+        else:
+            from app.store import create_store
+            from app.security import Settings
+            self.store = create_store(Settings.from_values(database_url=database_url, public_origin='http://localhost'))
         with socket.socket() as candidate:
             candidate.bind(("127.0.0.1", 0))
             self.port = candidate.getsockname()[1]
         self.origin = f"http://127.0.0.1:{self.port}"
         self.env = {**os.environ, "ONSTAGE_DATA_DIR": str(self.data_dir),
+                    "DATABASE_URL": database_url,
                     "ONSTAGE_PUBLIC_ORIGIN": self.origin, "ONSTAGE_SECURE_COOKIE": "0",
+                    # Existing v0.8 HTTP contracts explicitly exercise legacy guest mode.
+                    # Account-mode API/privacy is exercised separately in test_account_http.py.
+                    "ONSTAGE_LEGACY_GUESTS": "1",
                     "ONSTAGE_VERSION": "integration-test"}
         self.process = None
         self.log = None
@@ -100,11 +158,14 @@ class Person:
 
 @pytest.fixture
 def server(tmp_path):
-    instance = LiveServer(tmp_path).start()
+    instance = LiveServer(tmp_path)
     try:
+        instance.start()
         yield instance
     finally:
         instance.stop()
+        if instance.cleanup_database:
+            instance.cleanup_database()
 
 
 @pytest.fixture

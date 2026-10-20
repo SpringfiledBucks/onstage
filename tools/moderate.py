@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Private local-database moderation. Run only against an authorized data directory.
+"""Private PostgreSQL moderation. Uses the authorized DATABASE_URL Secret.
 
 Output contains report contents. Keep it in an operator-only terminal; do not
 publish it in application logs or source bundles. This tool never impersonates
@@ -10,7 +10,6 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-import sqlite3
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -33,7 +32,6 @@ def positive_limit(value: str) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--data-dir", type=Path, help="Explicit authorized directory containing onstage.sqlite3")
     commands = parser.add_subparsers(dest="command", required=True)
     listing = commands.add_parser("list", help="Read reports, including reports about a host")
     listing.add_argument("--status", choices=["open", "resolved", "dismissed", "all"], default="open")
@@ -51,13 +49,9 @@ def main() -> int:
     args = parser.parse_args()
     if args.command == "list" and args.after < 0:
         parser.error("--after must not be negative")
-    settings = Settings.from_values(data_dir=args.data_dir, public_origin="http://localhost")
-    if not settings.database_url and args.data_dir is None:
-        parser.error("--data-dir is required for SQLite; PostgreSQL uses DATABASE_URL.")
-    directory = settings.data_dir.resolve()
-    if not settings.database_url and not (directory / "onstage.sqlite3").is_file():
-        print("No existing onstage.sqlite3 at the selected directory; no database was created.", file=sys.stderr)
-        return 2
+    settings = Settings.from_values(public_origin="http://localhost")
+    if not settings.database_url:
+        parser.error("DATABASE_URL is required; only PostgreSQL is supported. Existing SQLite files are preserved.")
     store = create_store(settings)
     try:
         store.ready()  # Requires the current schema; no initialize()/migration in this CLI.
@@ -70,7 +64,7 @@ def main() -> int:
     except DomainError as error:
         print(json.dumps({"error": error.detail, "status": error.status_code}, ensure_ascii=False), file=sys.stderr)
         return 1
-    except (sqlite3.Error, SQLAlchemyError) as error:
+    except SQLAlchemyError as error:
         print(json.dumps({"error": "Database operation failed", "exception": type(error).__name__}), file=sys.stderr)
         return 1
     finally:

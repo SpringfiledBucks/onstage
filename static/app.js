@@ -421,10 +421,10 @@
           throw new ApiError(error?.message || "本机操作尚未确认，请重新读取记录。", Number(error?.status) || 0);
         }
       }
-      const response = await fetch(path, {
+      const response = await fetch(`${(window.ONSTAGE_CONFIG?.apiBaseUrl || "").replace(/\/$/, "")}${path}`, {
         method,
         headers,
-        credentials: "same-origin",
+        credentials: "include",
         cache: "no-store",
         body: body === undefined ? undefined : JSON.stringify(body),
         signal: controller.signal,
@@ -637,7 +637,7 @@
       showGuestEntry();
       return;
     }
-    const scope = PREVIEW && typeof data.storage_scope === "string" ? data.storage_scope : await sessionScope(data.csrf_token);
+    const scope = typeof data.storage_scope === "string" ? data.storage_scope : await sessionScope(data.csrf_token);
     if (sessionGeneration !== state.sessionGeneration) return;
     state.authenticated = true;
     state.awaitingNickname = false;
@@ -1038,6 +1038,7 @@
   function activateRoom(room, replaceRoute = false) {
     stopRoom();
     state.room = room;
+    if (location.pathname.startsWith("/play/") && window.parent !== window) window.parent.postMessage({ type: "onstage:room-updated", room_id: String(room.id) }, location.origin);
     state.channel = "stage";
     state.mobilePanel = "stage";
     state.cursors = { stage: 0, backstage: 0 };
@@ -1161,7 +1162,9 @@
   function applyRoom(room) {
     if (!room || !sameId(state.room?.id, room.id)) return false;
     if (Number.isFinite(Number(room.revision)) && Number.isFinite(Number(state.room.revision)) && Number(room.revision) < Number(state.room.revision)) return false;
+    const previousRevision = state.room.revision;
     state.room = room;
+    if (previousRevision !== room.revision && location.pathname.startsWith("/play/") && window.parent !== window) window.parent.postMessage({ type: "onstage:room-updated", room_id: String(room.id) }, location.origin);
     // Older transient snapshots used the same session scope but omitted its stable room member.
     const restored = state.pending.get(String(room.id));
     if (restored && restored.scope === state.scope && !restored.member_id && room.me?.member_id) {
@@ -2215,8 +2218,8 @@
     // A best-effort per-view departure changes presence only. The server's TTL
     // remains authoritative when a browser is killed or the network disappears.
     // A detached departure must never expire or mutate a newer UI session.
-    fetch(`${roomPath(currentRoomId())}/presence`, {
-      method: "POST", credentials: "same-origin", cache: "no-store", keepalive: true,
+    fetch(`${(window.ONSTAGE_CONFIG?.apiBaseUrl || "").replace(/\/$/, "")}${roomPath(currentRoomId())}/presence`, {
+      method: "POST", credentials: "include", cache: "no-store", keepalive: true,
       headers: { "Content-Type": "application/json", "X-CSRF-Token": state.csrf },
       body: JSON.stringify({ connection_id: state.presenceId, active: false }),
     }).catch(() => {});
@@ -2324,8 +2327,8 @@
     if (state.socket && (state.socket.readyState === WebSocket.OPEN || state.socket.readyState === WebSocket.CONNECTING)) return;
     state.socketMode = state.reconnectAttempts ? "retrying" : "connecting";
     updateConnection();
-    const url = new URL(`${roomPath(id)}/stream`, location.origin);
-    url.protocol = location.protocol === "https:" ? "wss:" : "ws:";
+    const url = new URL(`${roomPath(id)}/stream`, window.ONSTAGE_CONFIG?.wsBaseUrl || window.ONSTAGE_CONFIG?.apiBaseUrl || location.origin);
+    url.protocol = ["https:", "wss:"].includes(url.protocol) ? "wss:" : "ws:";
     let socket;
     try { socket = new WebSocket(url.href); }
     catch {
@@ -2435,11 +2438,12 @@
 
   async function copyRoomLink() {
     if (!state.room) return;
-    const url = new URL(location.pathname, location.origin);
-    if (!PREVIEW) url.hash = `room=${encodeURIComponent(currentRoomId())}`;
+    const accountFrontend = location.pathname.startsWith("/play/");
+    const url = new URL(accountFrontend ? `/room/${encodeURIComponent(currentRoomId())}` : location.pathname, location.origin);
+    if (!PREVIEW && !accountFrontend) url.hash = `room=${encodeURIComponent(currentRoomId())}`;
     try {
       await navigator.clipboard.writeText(url.href);
-      toast(PREVIEW ? "评审链接已复制；朋友打开后会看到自己的浏览器记录。" : "房间链接已复制。朋友填写昵称后就能以旁观者进入，无需注册。");
+      toast(PREVIEW ? "评审链接已复制；朋友打开后会看到自己的浏览器记录。" : accountFrontend ? "房间链接已复制。朋友登录并获得房间访问权限后可入场。" : "房间链接已复制。朋友填写昵称后就能以旁观者进入，无需注册。");
     } catch {
       const extra = node("div", "confirm-extra");
       const label = node("label", "", PREVIEW ? "预览链接" : "入场链接");
@@ -2742,6 +2746,22 @@
       $("hero-mygo").src = localAssetPath("/static/assets/bands/mygo.webp");
       $("hero-mujica").src = localAssetPath("/static/assets/bands/mujica.webp");
     });
+    if (location.pathname.startsWith("/play/") && window.parent !== window) {
+      try {
+        if (window.parent.location.origin === location.origin && window.parent.OnstageArtworkCache) window.OnstagePWA = window.parent.OnstageArtworkCache;
+      } catch { /* A standalone or cross-origin frame uses its own bounded cache controller. */ }
+    }
+    const updateMotionPreference = () => {
+      let reduce = false;
+      try { reduce = localStorage.getItem("onstage.reduce-motion") === "true"; } catch {}
+      document.documentElement.dataset.motion = reduce ? "reduce" : "full";
+    };
+    updateMotionPreference();
+    const motionStyle = document.createElement("style");
+    motionStyle.textContent = ":root[data-motion=reduce] *,:root[data-motion=reduce] *::before,:root[data-motion=reduce] *::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}";
+    document.head.append(motionStyle);
+    window.addEventListener("storage", (event) => { if (event.key === "onstage.reduce-motion") updateMotionPreference(); });
+    window.addEventListener("pagehide", () => window.OnstagePWA?.unsubscribe?.(renderArtworkStatus));
     if (!PREVIEW) window.OnstagePWA?.init({ onStatus: renderArtworkStatus });
     else { $("download-artwork").disabled = $("clear-artwork").disabled = true; $("artwork-status").textContent = "本机评审不启用多人站点的素材缓存。"; }
     await connectAnonymous();

@@ -184,7 +184,8 @@ def test_sticker_send_snapshot_idempotency_report_and_restart_ignore_later_catal
     receipt = report(observer, room_id, original)
     assert receipt["snapshot"]["message"] == original
     # A second Store represents a catalog revision without modifying shared source files.
-    revised = Store(Settings.from_values(data_dir=server.data_dir, public_origin=server.origin, secure_cookie=False))
+    from app.store import create_store
+    revised = create_store(Settings.from_values(database_url=server.env["DATABASE_URL"], public_origin=server.origin, secure_cookie=False))
     revised.initialize()
     revised.stickers[item["id"]] = {**revised.stickers[item["id"]],
                                     "label": "测试中的新版目录名称", "image": items[1]["image"]}

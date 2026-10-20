@@ -1,6 +1,5 @@
 import json
 import secrets
-import sqlite3
 import subprocess
 import sys
 import time
@@ -21,8 +20,8 @@ def report(person, room_id, message=None, reason="other", details="验收反馈"
 
 def moderate(server, *arguments):
     result = subprocess.run(
-        [sys.executable, str(ROOT / "tools" / "moderate.py"), "--data-dir", str(server.data_dir), *arguments],
-        capture_output=True, text=True, timeout=10,
+        [sys.executable, str(ROOT / "tools" / "moderate.py"), *arguments],
+        capture_output=True, text=True, timeout=10, env=server.env,
     )
     assert result.returncode == 0, result.stderr
     return json.loads(result.stdout)
@@ -152,8 +151,8 @@ def test_report_target_checks_snapshot_privacy_and_host_conflict_rules(server, p
     host.post(f"/api/rooms/{room_id}/reports/{ordinary['id']}/resolve", {"status": "resolved", "note": "已联系该成员调整发言"})
     assert host.client.post(f"/api/rooms/{room_id}/reports/{ordinary['id']}/resolve", json={"status": "dismissed", "note": "不得覆盖"}).status_code == 409
     # A separate data correction cannot rewrite the captured report evidence.
-    with sqlite3.connect(server.data_dir / "onstage.sqlite3") as database:
-        database.execute("UPDATE messages SET text=? WHERE id=?", ("后续变化", public["id"]))
+    with server.store._transaction(write=True) as database:
+        database.execute("UPDATE messages SET text=:text WHERE id=:id", {"text":"后续变化", "id":public["id"]})
     server.restart()
     receipts = observer.get("/api/reports?limit=2")
     assert receipts["has_more"] and len(receipts["reports"]) == 2
@@ -190,8 +189,8 @@ def test_private_operator_can_resolve_host_reports_and_end_orphan_room_with_audi
     assert resolved["resolved_by"] == "operator" and resolved["operator_label"] == "local-test-operator"
     own = actor.get("/api/reports")["reports"][0]
     assert own["resolved_by"] == "operator" and "operator_label" not in own
-    with sqlite3.connect(server.data_dir / "onstage.sqlite3") as database:
-        original_host = database.execute("SELECT host_session_id FROM rooms WHERE id=?", (room_id,)).fetchone()[0]
+    with server.store._transaction(write=True) as database:
+        original_host = database.execute("SELECT host_session_id FROM rooms WHERE id=:id", {"id":room_id}).fetchone()[0]
     with actor.websocket(room_id) as socket:
         socket.recv(timeout=2)
         host.post("/api/logout")
@@ -211,10 +210,10 @@ def test_private_operator_can_resolve_host_reports_and_end_orphan_room_with_audi
     assert blocked.status_code == 409
     again = moderate(server, "end-room", room_id, "--note", "重复命令", "--operator", "local-test-operator")
     assert not again["changed"]
-    with sqlite3.connect(server.data_dir / "onstage.sqlite3") as database:
-        assert database.execute("SELECT host_session_id FROM rooms WHERE id=?", (room_id,)).fetchone()[0] == original_host
-        actions = database.execute("SELECT action,operator_label,note FROM moderation_actions WHERE room_id=?", (room_id,)).fetchall()
-        assert actions == [("end_room", "local-test-operator", "失联主持收场验收")]
+    with server.store._transaction(write=True) as database:
+        assert database.execute("SELECT host_session_id FROM rooms WHERE id=:id", {"id":room_id}).fetchone()[0] == original_host
+        actions = database.execute("SELECT action,operator_label,note FROM moderation_actions WHERE room_id=:id", {"id":room_id}).fetchall()
+        assert [tuple(row.values()) for row in actions] == [("end_room", "local-test-operator", "失联主持收场验收")]
     messages = actor.get(f"/api/rooms/{room_id}/messages")["messages"]
     assert sum(m["kind"] == "system" and "服务器维护者结束" in m["text"] for m in messages) == 1
     assert all("失联主持收场验收" not in m["text"] for m in messages)

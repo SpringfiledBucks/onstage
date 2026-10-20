@@ -1,0 +1,33 @@
+groups:
+  - name: onstage-service
+    rules:
+      - alert: OnstageHighServerErrorRate
+        expr: |
+          sum(rate(onstage_http_requests_total{status_class="5xx"}[5m]))
+          /
+          clamp_min(sum(rate(onstage_http_requests_total[5m])), 0.001)
+          > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Onstage server error rate is above 5%
+          description: More than 5% of observed HTTP requests returned 5xx for five minutes.
+      - alert: OnstageHighRequestLatency
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le) (rate(onstage_http_request_duration_seconds_bucket[5m]))) > 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Onstage HTTP p95 latency is above one second
+          description: HTTP request p95 latency exceeded one second for ten minutes.
+      - alert: OnstageDatabasePoolSaturated
+        expr: histogram_quantile(0.95, sum by (le) (rate(onstage_database_operation_duration_seconds_bucket[5m]))) > 0.5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Onstage database time p95 is above 500 ms
+          description: Database time within HTTP requests exceeded 500 ms at p95 for ten minutes.

@@ -5,12 +5,12 @@ import logging
 import mimetypes
 import os
 import re
-import sqlite3
+import secrets
 import time
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import partial
 from pathlib import Path
 from typing import Literal
@@ -18,7 +18,7 @@ from typing import Literal
 import anyio
 from fastapi import FastAPI, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.middleware.gzip import GZipMiddleware
@@ -26,6 +26,10 @@ from sqlalchemy.exc import IntegrityError as SQLIntegrityError, SQLAlchemyError
 
 from .security import COOKIE_NAME, DomainError, Settings, new_id
 from .store import create_store
+from .cors import OriginPolicy
+from .community_api import mount_community
+from .telemetry import Telemetry
+from .push import PushConfig, PushWorker, mount_push
 
 
 logger = logging.getLogger("uvicorn.error.onstage")
@@ -64,6 +68,8 @@ class RoomBody(Body):
     title: str | None = Field(default=None, max_length=80)
     background: str | None = Field(default=None, max_length=2000)
     announcement: str = Field(default="", max_length=500)
+    access: Literal["public", "password", "invite"] = "public"
+    password: str | None = Field(default=None, max_length=128)
 
 
 class CharacterBody(Body):
@@ -270,19 +276,20 @@ def create_app(
         message_limit_per_minute=message_limit_per_minute,
     )
     write_frozen = os.environ.get("ONSTAGE_WRITE_FROZEN", "0") == "1"
+    legacy_guests = os.environ.get("ONSTAGE_LEGACY_GUESTS", "0") == "1"
+    if not legacy_guests:
+        settings = replace(settings, session_ttl_seconds=min(settings.session_ttl_seconds, 900))
     store = create_store(settings)
     hub = Hub()
+    push_config = PushConfig.from_env()
+    origins = OriginPolicy(settings)
+    cookie_name = COOKIE_NAME if legacy_guests else ("__Host-onstage_session" if settings.secure_cookie else "onstage_account_dev")
 
     async def run_db(operation, *args, **kwargs):
         started = time.perf_counter()
         try:
             return await anyio.to_thread.run_sync(partial(operation, *args, **kwargs))
-        except sqlite3.OperationalError as exc:
-            logger.error("数据库操作失败：%s", type(exc).__name__)
-            if "locked" in str(exc).lower() or "busy" in str(exc).lower():
-                raise DomainError(503, "数据库暂忙，请稍后使用相同消息 ID 重试。") from exc
-            raise DomainError(503, "数据库暂不可用，操作未被确认。") from exc
-        except (sqlite3.IntegrityError, SQLIntegrityError) as exc:
+        except SQLIntegrityError as exc:
             logger.error("数据库约束拒绝了操作：%s", type(exc).__name__)
             raise DomainError(409, "当前状态与操作冲突，请重新同步房间。") from exc
         except SQLAlchemyError as exc:
@@ -299,12 +306,38 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(application: FastAPI):
+        maintenance = None
+        push_task = None
         try:
             # PostgreSQL initialize checks the explicit migration; it never DDLs.
             await run_db(store.initialize)
+            await run_db(store.recover_presence)
             hub.start()
+            async def maintain():
+                while True:
+                    try:
+                        changed = await run_db(store.sweep_offline)
+                        for room_id in changed:
+                            await hub.notify(room_id)
+                        telemetry = getattr(application.state, "telemetry", None)
+                        if telemetry:
+                            await run_db(telemetry.sample)
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception:
+                        logger.error("background_maintenance_failed")
+                    await asyncio.sleep(20)
+            maintenance = asyncio.create_task(maintain(), name="onstage-maintenance")
+            if push_config.enabled:
+                push_task = asyncio.create_task(PushWorker(store, push_config).run(), name="onstage-web-push")
             yield
         finally:
+            if push_task:
+                push_task.cancel()
+                await asyncio.gather(push_task, return_exceptions=True)
+            if maintenance:
+                maintenance.cancel()
+                await asyncio.gather(maintenance, return_exceptions=True)
             await hub.close_all()
             await run_db(store.close)
 
@@ -316,6 +349,8 @@ def create_app(
     application.add_middleware(TextCompression)
     application.state.store = store
     application.state.hub = hub
+    application.state.push_config = push_config
+    application.state.telemetry = Telemetry(store, hub)
     application.state.db_path = None if settings.database_url else store.db_path
 
     @application.exception_handler(DomainError)
@@ -347,12 +382,37 @@ def create_app(
 
     async def protected_response(request, call_next, started, request_id, timings):
         response = None
+        cors_headers = {}
         if write_frozen and request.url.path.startswith("/api/") and request.method not in {"GET", "HEAD", "OPTIONS"}:
             response = JSONResponse({"detail": "站点正在迁移，当前入口已暂停写入。请保留身份与草稿。"},
                                     status_code=503, headers={"Retry-After": "60"})
         if response is None and request.url.path.startswith("/api/"):
             try:
-                settings.check_origin(request.headers.get("origin"))
+                method = request.headers.get("access-control-request-method", request.method) if request.method == "OPTIONS" else request.method
+                origin = request.headers.get("origin")
+                credentialed = origins.check(origin, request.url.path, method)
+                request.state.anonymous_public = bool(origin and not credentialed)
+                cors_headers = origins.headers(origin, request.url.path, method)
+                if request.method == "OPTIONS":
+                    if method not in {"GET", "POST", "DELETE", "HEAD"}:
+                        raise DomainError(403, "请求方法不被允许。")
+                    requested = {value.strip().lower() for value in request.headers.get("access-control-request-headers", "").split(",") if value.strip()}
+                    if not requested.issubset({"content-type", "x-csrf-token", "accept"}):
+                        raise DomainError(403, "请求头不被允许。")
+                    response = JSONResponse({}, status_code=200, headers={
+                        "Access-Control-Allow-Methods": method,
+                        "Access-Control-Allow-Headers": "Content-Type, X-CSRF-Token, Accept",
+                        "Access-Control-Max-Age": "300"})
+                elif not legacy_guests:
+                    public = origins.public_path(request.url.path, request.method)
+                    auth_bootstrap = request.url.path in {"/api/session", "/api/auth/register", "/api/auth/login"}
+                    if not public and not auth_bootstrap:
+                        token, csrf = credentials(request)
+                        await run_db(store.account_identity, token, csrf,
+                                     admin=request.url.path.startswith("/api/admin/") or
+                                     ("/reports" in request.url.path and request.method == "GET") or
+                                     request.url.path.endswith("/resolve"),
+                                     write=request.method not in {"GET", "HEAD"})
             except DomainError as exc:
                 response = JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
         if response is None:
@@ -367,11 +427,17 @@ def create_app(
             response = await call_next(request)
         elapsed = (time.perf_counter() - started) * 1000
         response.headers["X-Request-ID"] = request_id
+        for name, value in cors_headers.items():
+            response.headers[name] = value
         response.headers["Server-Timing"] = f"app;dur={elapsed:.3f}, db;dur={sum(timings):.3f}"
         route = request.scope.get("route")
         logger.info("http_request request_id=%s method=%s route=%s status=%d duration_ms=%.3f database_ms=%.3f",
                     request_id, request.method, getattr(route, "path", "unmatched"),
                     response.status_code, elapsed, sum(timings))
+        telemetry = getattr(application.state, "telemetry", None)
+        if telemetry:
+            telemetry.observe(request.method, getattr(route, "path", "unmatched"), response.status_code,
+                              elapsed / 1000, sum(timings) / 1000)
         path = request.url.path
         if response.status_code in {200, 304} and re.fullmatch(r"/static/assets/optimized/[0-9a-f]{64}\.webp", path):
             response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
@@ -392,7 +458,9 @@ def create_app(
         return response
 
     def credentials(request: Request) -> tuple[str | None, str | None]:
-        return request.cookies.get(COOKIE_NAME), request.headers.get("x-csrf-token")
+        if getattr(request.state, "anonymous_public", False):
+            return None, None
+        return request.cookies.get(cookie_name), request.headers.get("x-csrf-token")
 
     async def room_response(token: str | None, room_id: str) -> dict:
         return await run_db(store.get_room, token, room_id, hub.online(room_id))
@@ -419,10 +487,27 @@ def create_app(
     async def ready():
         return await run_db(store.ready)
 
+    @application.get("/metrics")
+    async def metrics(request: Request):
+        expected = os.environ.get("ONSTAGE_METRICS_TOKEN", "")
+        provided = request.headers.get("authorization", "")
+        if not expected or not secrets.compare_digest(provided.encode(), ("Bearer " + expected).encode()):
+            raise DomainError(403, "指标接口需要独立授权。")
+        return Response(application.state.telemetry.render(), media_type="text/plain; version=0.0.4; charset=utf-8")
+
     @application.post("/api/session")
     async def create_session(request: Request, body: SessionBody | None = None):
         address = request.client.host if request.client else "unknown"
         token, csrf = credentials(request)
+        if token and not legacy_guests:
+            try:
+                await run_db(store.account_identity, token)
+                return await run_db(store.get_session, token)
+            except DomainError as exc:
+                if exc.status_code not in {401, 403}:
+                    raise
+                if exc.status_code == 403:
+                    token = None
         created = await run_db(
             store.create_session, token, address, body.nickname if body is not None else None, csrf,
         )
@@ -433,7 +518,7 @@ def create_app(
         })
         if created["token"] is not None:
             response.set_cookie(
-                COOKIE_NAME, created["token"], max_age=settings.session_ttl_seconds,
+                cookie_name, created["token"], max_age=settings.session_ttl_seconds,
                 httponly=True, secure=settings.secure_cookie, samesite="strict", path="/",
             )
         return response
@@ -450,18 +535,27 @@ def create_app(
         await hub.close_session(session_id)
         response = JSONResponse({"ok": True})
         response.delete_cookie(
-            COOKIE_NAME, path="/", httponly=True, secure=settings.secure_cookie, samesite="strict"
+            cookie_name, path="/", httponly=True, secure=settings.secure_cookie, samesite="strict"
         )
         return response
 
     @application.get("/api/catalog")
     async def catalog(request: Request):
+        if not legacy_guests:
+            return store.catalog
         token, _ = credentials(request)
         return await run_db(store.get_catalog, token)
 
     @application.get("/api/rooms")
-    async def rooms(request: Request, limit: int = Query(50, ge=1, le=100), cursor: str | None = Query(None, max_length=200), filter: Literal["all", "active", "ended", "mine"] = "all"):
+    async def rooms(request: Request, limit: int = Query(24, ge=1, le=100), cursor: str | None = Query(None, max_length=1500), filter: Literal["all", "active", "ended", "mine"] = "all", sort: Literal["time", "rating", "dialogue"] = "time", preferred: bool = False):
         token, _ = credentials(request)
+        if not legacy_guests:
+            try:
+                return await run_db(store.public_rooms, token, limit, cursor, filter, sort, preferred)
+            except DomainError as exc:
+                if not token or filter == 'mine' or exc.status_code not in {401, 403}:
+                    raise
+                return await run_db(store.public_rooms, None, limit, cursor, filter, sort, preferred)
         return await run_db(store.list_rooms, token, hub.online_all(), limit, cursor, filter)
 
     @application.post("/api/rooms")
@@ -470,6 +564,7 @@ def create_app(
         room_id = await run_db(
             store.create_room, token, csrf, body.scenario_id, body.title, body.background, body.announcement,
             request.client.host if request.client else "unknown",
+            access=body.access, password=body.password,
         )
         return await room_response(token, room_id)
 
@@ -587,9 +682,11 @@ def create_app(
     @application.websocket("/api/rooms/{room_id}/stream")
     async def stream(websocket: WebSocket, room_id: str):
         connection = None
-        token = websocket.cookies.get(COOKIE_NAME)
+        token = websocket.cookies.get(cookie_name)
         try:
-            settings.check_origin(websocket.headers.get("origin"), required=True)
+            origins.check(websocket.headers.get("origin"), f"/api/rooms/{room_id}/stream", "POST", required=True)
+            if not legacy_guests:
+                await run_db(store.account_identity, token)
             identity = await run_db(store.websocket_identity, token, room_id)
             connection = Connection(
                 websocket=websocket, room_id=room_id,
@@ -602,6 +699,7 @@ def create_app(
             await hub.notify(room_id)
             last_check = time.monotonic()
             last_revision = identity["revision"]
+            last_lease = 0.0
             incoming = deque()
             while not connection.closed:
                 if time.monotonic() - last_check >= 1:
@@ -621,6 +719,10 @@ def create_app(
                 if payload != "ping" or len(incoming) > 120:
                     await hub.close(connection, 1008)
                     break
+                if not legacy_guests and now - last_lease >= 20:
+                    current_session = await run_db(store.get_session, token)
+                    await run_db(store.heartbeat, token, current_session["csrf_token"], room_id, connection.id)
+                    last_lease = now
                 await hub.send(connection, {"type": "pong"})
         except DomainError:
             if connection is not None:
@@ -634,6 +736,8 @@ def create_app(
                 await hub.close(connection)
                 await hub.notify(room_id)
 
+    mount_community(application, store, settings, run_db, credentials, hub, cookie_name)
+    mount_push(application, store, run_db, credentials, push_config)
     return application
 
 

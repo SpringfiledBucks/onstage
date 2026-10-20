@@ -87,10 +87,10 @@ def test_bundled_samples_are_valid_original_images_with_matching_manifest(public
     assert source_record['sha256'] == hashlib.sha256((public_tree / 'SOURCE_REVISION.json').read_bytes()).hexdigest()
 
 
-def test_exported_application_and_deployment_preparation_are_runnable(public_tree, tmp_path):
+def test_exported_application_and_deployment_preparation_are_runnable(public_tree, tmp_path, http_database):
     runtime_tree = ROOT if (ROOT / 'PUBLIC_SOURCE_PROVENANCE.json').is_file() else public_tree
     env = {**os.environ, 'ONSTAGE_DATA_DIR': str(tmp_path / 'data'), 'ONSTAGE_PUBLIC_ORIGIN': 'http://testserver', 'ONSTAGE_SECURE_COOKIE': '0'}
-    env.pop('DATABASE_URL', None)
+    env['DATABASE_URL'] = http_database.settings.database_url
     env.pop('ONSTAGE_DATABASE_URL', None)
     script = '''
 import json, hashlib

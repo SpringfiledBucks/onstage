@@ -1,0 +1,313 @@
+{
+  "version": "0.9.0",
+  "started_at_utc": "2026-10-20T07:52:02.160Z",
+  "method": "Node VM executes the original preview adapter with isolated browser storage; fetch allows only the bundled static catalog and WebSocket construction throws",
+  "browser_executed": false,
+  "layout_executed": false,
+  "network_executed": false,
+  "steps": [
+    {
+      "name": "Production entry does not load preview scripts; absent/false configuration is inert",
+      "result": "passed",
+      "milliseconds": 3.7
+    },
+    {
+      "name": "Nickname guest identity preserves anonymous compatibility, validates names and restores without creating an account",
+      "result": "passed",
+      "milliseconds": 5.192
+    },
+    {
+      "name": "Bundled catalog is read locally; new room contains only the reviewer's deliberate identity",
+      "result": "passed",
+      "milliseconds": 3.431
+    },
+    {
+      "name": "Offline room pages apply filters before slicing, retain tied-time order and reject cross-filter cursors",
+      "result": "passed",
+      "milliseconds": 57.181
+    },
+    {
+      "name": "Single-person local stage requires an explicitly selected character and creates no peer",
+      "result": "passed",
+      "milliseconds": 0.484
+    },
+    {
+      "name": "Durable member events are frozen and not duplicated by role retries, session restore or idempotent join",
+      "result": "passed",
+      "milliseconds": 0.434
+    },
+    {
+      "name": "Only manual text/sticker writes enter history; retries preserve ID and payload",
+      "result": "passed",
+      "milliseconds": 0.856
+    },
+    {
+      "name": "Preview governance is explicitly unavailable; no fake report or resolution receipt",
+      "result": "passed",
+      "milliseconds": 0.133
+    },
+    {
+      "name": "End/readback remains local and readonly; refresh preserves the reviewer's own messages",
+      "result": "passed",
+      "milliseconds": 1.998
+    },
+    {
+      "name": "Reset rotates local identity, removes local rooms and preview drafts, preserves unrelated storage",
+      "result": "passed",
+      "milliseconds": 0.372
+    },
+    {
+      "name": "Requests never fall through to a network API or WebSocket",
+      "result": "passed",
+      "milliseconds": 0.077
+    },
+    {
+      "name": "A delayed catalog read in another tab cannot restore an identity or rooms erased by reset",
+      "result": "passed",
+      "milliseconds": 8.554
+    },
+    {
+      "name": "Offline review build has an explicit preview entry, separate from the live deployment",
+      "result": "passed",
+      "milliseconds": 76.133
+    },
+    {
+      "name": "Shared UI preview boot uses only the bundled catalog and keeps another browser's records independent",
+      "result": "passed",
+      "milliseconds": 305.669
+    },
+    {
+      "name": "An existing unlabelled local identity asks for a nickname and retains its invite target, scope and history",
+      "result": "passed",
+      "milliseconds": 121.352
+    },
+    {
+      "name": "Shared UI selects one actor, explicitly previews the stage, and renders manual text plus a null-character sticker",
+      "result": "passed",
+      "milliseconds": 407.265
+    },
+    {
+      "name": "Shared preview sharing removes the local room hash and report form cannot create a receipt",
+      "result": "passed",
+      "milliseconds": 38.125
+    },
+    {
+      "name": "Preview banner measured height is propagated on resize; CSS subtracts it from the room",
+      "result": "passed",
+      "milliseconds": 2.784
+    },
+    {
+      "name": "Shared preview reset clears local room route and preview drafts while retaining theme and production storage",
+      "result": "passed",
+      "milliseconds": 41.646
+    },
+    {
+      "name": "A generated preview entry with missing mode/adapter scripts fails closed without production transport fallback",
+      "result": "passed",
+      "milliseconds": 210.782
+    },
+    {
+      "name": "All shared preview DOM paths made zero network API calls and zero WebSocket constructions",
+      "result": "passed",
+      "milliseconds": 0.272
+    }
+  ],
+  "errors": [],
+  "limitations": [
+    "No rendered layout, real browser storage implementation, image decoding, clipboard, IME or physical phone check",
+    "No public Site, TLS, mainland network or real multiplayer validation",
+    "Production backend integration remains a separate test suite"
+  ],
+  "input_sha256": {
+    "preview/adapter.js": "936638b84a1e6234ac77b527acf0af5eaa1bc8909956dd1bab65dbb5cf0f0d7e",
+    "app/catalog.json": "d2b46c05677204e76e8dde263737f740f5296dbc541c2883601efcf8a1f2ea43",
+    "static/app.js": "3f0863b8dab450300c8f8c8cabb846a5b01dc97f49f7e14a3821c28788c0a56c"
+  },
+  "catalog_counts": {
+    "scenarios": 20,
+    "characters": 10,
+    "stickers": 143
+  },
+  "allowed_catalog_reads": 4,
+  "dist_manifest_sha256": "4e1a95b9373b94d402cbad130969e180ba57465fbf5d5c4d7768924838bb1141",
+  "dist_manifest_entries_checked": 384,
+  "dist_files_checked": 385,
+  "dom_null_character_sticker_checked": true,
+  "dom_banner_measurement": "Injected 72px and 116px offsetHeight values reach --preview-height; CSS subtraction checked. This is not rendered geometry acceptance.",
+  "dom_executed": true,
+  "dom_engine": "jsdom 26.1.0; CSS layout is not executed",
+  "dom_catalog_fetches": 3,
+  "dom_websocket_constructions": 0,
+  "dom_network_api_calls": 0,
+  "dom_diagnostics": [
+    {
+      "view": "loading",
+      "websocket_constructions": 0,
+      "fetches": [
+        {
+          "origin": "https://preview-review.invalid",
+          "pathname": "/preview/catalog.json",
+          "method": "GET"
+        }
+      ],
+      "exceptions": [],
+      "latest_calls": [
+        {
+          "pathname": "/api/rooms/local-room-fd7e7423-32b1-4706-853a-e2834a767e5d/messages",
+          "method": "POST",
+          "status": 200
+        },
+        {
+          "pathname": "/api/rooms/local-room-fd7e7423-32b1-4706-853a-e2834a767e5d/sync",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "pathname": "/api/rooms/local-room-fd7e7423-32b1-4706-853a-e2834a767e5d/messages",
+          "method": "POST",
+          "status": 200
+        },
+        {
+          "pathname": "/api/rooms/local-room-fd7e7423-32b1-4706-853a-e2834a767e5d/sync",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "pathname": "/api/session",
+          "method": "POST",
+          "status": 200
+        },
+        {
+          "pathname": "/api/session",
+          "method": "POST",
+          "status": 200
+        },
+        {
+          "pathname": "/api/session",
+          "method": "POST",
+          "status": 200
+        },
+        {
+          "pathname": "/api/rooms",
+          "method": "GET",
+          "status": 200
+        }
+      ],
+      "loading_error": ""
+    },
+    {
+      "view": "lobby",
+      "websocket_constructions": 0,
+      "fetches": [
+        {
+          "origin": "https://preview-review.invalid",
+          "pathname": "/preview/catalog.json",
+          "method": "GET"
+        }
+      ],
+      "exceptions": [],
+      "latest_calls": [
+        {
+          "pathname": "/api/session",
+          "method": "GET",
+          "status": 401
+        },
+        {
+          "pathname": "/api/session",
+          "method": "POST",
+          "status": 200
+        },
+        {
+          "pathname": "/api/catalog",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "pathname": "/api/rooms",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "pathname": "/api/rooms",
+          "method": "GET",
+          "status": 200
+        }
+      ],
+      "loading_error": ""
+    },
+    {
+      "view": "room",
+      "websocket_constructions": 0,
+      "fetches": [
+        {
+          "origin": "https://preview-review.invalid",
+          "pathname": "/preview/catalog.json",
+          "method": "GET"
+        }
+      ],
+      "exceptions": [],
+      "latest_calls": [
+        {
+          "pathname": "/api/session",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "pathname": "/api/session",
+          "method": "POST",
+          "status": 200
+        },
+        {
+          "pathname": "/api/catalog",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "pathname": "/api/rooms",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "pathname": "/api/rooms/local-room-fd7e7423-32b1-4706-853a-e2834a767e5d/join",
+          "method": "POST",
+          "status": 200
+        },
+        {
+          "pathname": "/api/rooms/local-room-fd7e7423-32b1-4706-853a-e2834a767e5d/sync",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "pathname": "/api/session",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "pathname": "/api/rooms/local-room-fd7e7423-32b1-4706-853a-e2834a767e5d/messages",
+          "method": "GET",
+          "status": 200
+        }
+      ],
+      "loading_error": ""
+    },
+    {
+      "view": "loading",
+      "websocket_constructions": 0,
+      "fetches": [],
+      "exceptions": [],
+      "latest_calls": [],
+      "loading_error": "本机预览组件未载入，请刷新页面再试。"
+    },
+    {
+      "view": "loading",
+      "websocket_constructions": 0,
+      "fetches": [],
+      "exceptions": [],
+      "latest_calls": [],
+      "loading_error": "本机预览组件未载入，请刷新页面再试。"
+    }
+  ],
+  "result": "passed",
+  "finished_at_utc": "2026-10-20T07:52:04.100Z",
+  "elapsed_seconds": 1.941
+}
